@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import requests
 from collections import defaultdict, deque
 
@@ -25,80 +26,84 @@ LINK_PATTERN = re.compile(
 
 
 def ask_noe(chat_id, user_name, user_text):
+
+    messages = [
+        {
+            "role": "system",
+            "content": """
+မင်းက Noe ဆိုတဲ့ Telegram group chat bot ပါ။
+
+မြန်မာသူငယ်ချင်းတစ်ယောက်နဲ့ စကားပြောသလို သဘာဝကျကျ ပြောပါ။
+
+စည်းကမ်းများ:
+- မြန်မာစကားကို နေ့စဉ်သုံးစကားပုံစံနဲ့ ပြောပါ။
+- စကားတိုတိုနဲ့ တိုက်ရိုက်ဖြေပါ။
+- အရမ်း formal မပြောပါနဲ့။
+- "ကျွန်ုပ်", "အသုံးပြုသူ", "AI assistant" စတဲ့ စကားတွေ မသုံးပါနဲ့။
+- Emoji လုံးဝ မသုံးပါနဲ့။
+- User ပြောတာကို ပြန်ကူးမပြောပါနဲ့။
+- User ရဲ့ အဓိပ္ပာယ်ကို နားလည်ပြီး တိုက်ရိုက်ဖြေပါ။
+- အရင် message တွေကို context အဖြစ် အသုံးပြုပါ။
+- မေးခွန်းတစ်ခုကို မေးခွန်းနဲ့ ပြန်မဖြေပါနဲ့။
+- အဓိပ္ပာယ်မရှိတဲ့ စကား မဖန်တီးပါနဲ့။
+- User က ရင်းနှီးတဲ့ပုံစံနဲ့ပြောရင် ရင်းနှီးတဲ့ပုံစံနဲ့ ပြန်ပါ။
+- လိုအပ်ရင် တစ်ကြောင်းတည်းနဲ့ ဖြေပါ။
+- အကြောင်းအရာရှင်းပြဖို့လိုမှသာ ပိုရှည်ပါ။
+- User က "ဘယ်မှာ" လို့မေးရင် အရင် context ကိုကြည့်ပြီး ဖြေပါ။
+- User က "ဘာလုပ်" လို့ပြောရင် အရင်စကားနဲ့ဆက်စပ်ပြီး ဖြေပါ။
+- Bot/AI ဟုတ်လားလို့ တိုက်ရိုက်မေးရင် ရိုးသားစွာ ဖြေပါ။
+- ကိုယ့်ကိုယ်ကို လူအစစ်လို့ မပြောပါနဲ့။
+"""
+        }
+    ]
+
+    messages.extend(list(history[chat_id]))
+
+    messages.append({
+        "role": "user",
+        "content": f"{user_name}: {user_text}"
+    })
+
     try:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "မင်းက Noe ဆိုတဲ့ Telegram group chat bot ပါ။ "
-                    "မြန်မာသူငယ်ချင်းတစ်ယောက်နဲ့ chat နေသလို သဘာဝကျကျ ပြောပါ။ "
-                    "အသုံးများတဲ့ နေ့စဉ်မြန်မာစကားကို သုံးပါ။ "
-                    "စကားတိုတိုနဲ့ တိုက်ရိုက်ပြန်ပါ။ "
-                    "Formal မပြောပါနဲ့။ "
-                    "ကျွန်ုပ်၊ အသုံးပြုသူ၊ AI assistant စတဲ့ formal စကားတွေ မသုံးပါနဲ့။ "
-                    "Emoji မသုံးပါနဲ့။ "
-                    "User ပြောတဲ့အကြောင်းအရာကို သေချာနားလည်ပြီး တိုက်ရိုက်ဖြေပါ။ "
-                    "အရင် message တွေကို context အနေနဲ့ အသုံးပြုပြီး "
-                    "နောက် message နဲ့ ဆက်စပ်အောင် ပြန်ပါ။ "
-                    "အကြောင်းမဲ့ မေးခွန်းတွေ မဖန်တီးပါနဲ့။ "
-                    "User က စကားတစ်ခွန်းပြောရင် အဲဒီစကားနဲ့ သက်ဆိုင်တဲ့ "
-                    "သဘာဝကျတဲ့ တုံ့ပြန်မှုကို ပေးပါ။ "
-                    "အဖြေကို မရှည်စေပါနဲ့။ "
-                    "User က ဟာသပြောရင် သဘာဝကျကျ ပြန်ပြောပါ။ "
-                    "User က မေးခွန်းမေးရင် အဖြေကို တိုက်ရိုက်ပေးပါ။ "
-                    "User က ရင်းနှီးတဲ့စကားသုံးရင် ရင်းနှီးတဲ့စကားနဲ့ ပြန်ပါ။ "
-                    "Bot သို့မဟုတ် AI ဟုတ်လားလို့ တိုက်ရိုက်မေးရင် ရိုးသားစွာ ဖြေပါ။ "
-                    "ကိုယ့်ကိုယ်ကို လူအစစ်လို့ မပြောပါနဲ့။"
-                )
-            }
-        ]
-
-        # အရင်စကားတွေ ထည့်မယ်
-        messages.extend(list(history[chat_id]))
-
-        # လက်ရှိ message
-        messages.append({
-            "role": "user",
-            "content": f"{user_name}: {user_text}"
-        })
-
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
+                "HTTP-Referer": "https://openrouter.ai/",
+                "X-Title": "Noe Telegram Bot"
             },
             json={
                 "model": "meta-llama/llama-3.3-70b-instruct:free",
                 "messages": messages,
-                "max_tokens": 80,
-                "temperature": 0.5
+                "max_tokens": 100,
+                "temperature": 0.6
             },
-            timeout=20
+            timeout=25
         )
 
+        print("AI STATUS:", response.status_code)
+
         if response.status_code != 200:
-            print("AI ERROR:", response.status_code)
-            print(response.text)
+            print("AI ERROR:", response.text)
             return None
 
         data = response.json()
-        choices = data.get("choices", [])
+
+        choices = data.get("choices")
 
         if not choices:
-            print("NO CHOICES:", data)
+            print("AI EMPTY:", data)
             return None
 
-        reply = choices[0].get(
-            "message", {}
-        ).get(
-            "content", ""
-        ).strip()
+        reply = choices[0].get("message", {}).get("content", "")
 
         if not reply:
+            print("AI NO TEXT:", data)
             return None
 
-        # Emoji ဖယ်
+        reply = reply.strip()
+
         reply = re.sub(
             r"[\U0001F300-\U0001FAFF"
             r"\U00002700-\U000027BF"
@@ -110,7 +115,6 @@ def ask_noe(chat_id, user_name, user_text):
         if not reply:
             return None
 
-        # History ထဲသိမ်း
         history[chat_id].append({
             "role": "user",
             "content": f"{user_name}: {user_text}"
@@ -124,11 +128,12 @@ def ask_noe(chat_id, user_name, user_text):
         return reply
 
     except Exception as e:
-        print("AI ERROR:", repr(e))
+        print("AI EXCEPTION:", repr(e))
         return None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if update.message:
         await update.message.reply_text(
             "Noe ရောက်နေပြီ"
@@ -139,6 +144,7 @@ async def check_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+
     message = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
@@ -154,9 +160,11 @@ async def check_message(
     if not text.strip():
         return
 
-    # Link spam
+    # Link spam စစ်
     if LINK_PATTERN.search(text):
+
         key = (chat.id, user.id)
+
         warnings[key] += 1
 
         count = warnings[key]
@@ -167,6 +175,7 @@ async def check_message(
             print("DELETE ERROR:", repr(e))
 
         if count >= 3:
+
             try:
                 await context.bot.restrict_chat_member(
                     chat.id,
@@ -187,6 +196,7 @@ async def check_message(
             warnings[key] = 0
 
         else:
+
             await context.bot.send_message(
                 chat.id,
                 f"{user.first_name} Warning {count}/3"
@@ -194,31 +204,40 @@ async def check_message(
 
         return
 
-    # စကားတိုင်း AI ကိုပို့
-    reply = await __import__("asyncio").to_thread(
+    # စာတိုင်း AI ကိုပို့
+    reply = await asyncio.to_thread(
         ask_noe,
         chat.id,
         user.first_name,
         text
     )
 
-    if reply is not None:
-    await message.reply_text(reply)
+    # AI မရရင် group ထဲမှာ fallback မပြော
+    if reply is None:
+        return
 
     await message.reply_text(reply)
 
 
 def main():
+
     if not TOKEN:
-        raise RuntimeError("BOT_TOKEN မတွေ့ပါ")
+        raise RuntimeError(
+            "BOT_TOKEN မတွေ့ပါ"
+        )
 
     if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY မတွေ့ပါ")
+        raise RuntimeError(
+            "OPENROUTER_API_KEY မတွေ့ပါ"
+        )
 
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     )
 
     app.add_handler(
@@ -228,7 +247,7 @@ def main():
         )
     )
 
-    print("NOE NATURAL CHAT STARTED")
+    print("NOE AI CHAT STARTED")
 
     app.run_polling()
 
