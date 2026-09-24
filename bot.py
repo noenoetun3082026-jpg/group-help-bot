@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import asyncio
 import requests
 from collections import defaultdict, deque
@@ -19,13 +20,47 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 warnings = defaultdict(int)
 history = defaultdict(lambda: deque(maxlen=10))
 
+# AI request ထပ်ခါထပ်ခါ မပို့အောင်
+last_request = defaultdict(float)
+REQUEST_COOLDOWN = 2
+
 LINK_PATTERN = re.compile(
     r"(https?://|t\.me/|telegram\.me/|www\.)",
     re.IGNORECASE
 )
 
 
+def clean_reply(reply):
+    if not reply:
+        return None
+
+    reply = reply.strip()
+
+    # Emoji ဖယ်
+    reply = re.sub(
+        r"[\U0001F300-\U0001FAFF"
+        r"\U00002700-\U000027BF"
+        r"\U0001F1E6-\U0001F1FF]+",
+        "",
+        reply
+    ).strip()
+
+    return reply if reply else None
+
+
 def ask_noe(chat_id, user_name, user_text):
+
+    now = time.time()
+
+    # Request အရမ်းမြန်ရင် မပို့သေး
+    wait_time = REQUEST_COOLDOWN - (
+        now - last_request[chat_id]
+    )
+
+    if wait_time > 0:
+        time.sleep(wait_time)
+
+    last_request[chat_id] = time.time()
 
     messages = [
         {
@@ -64,77 +99,165 @@ def ask_noe(chat_id, user_name, user_text):
         "content": f"{user_name}: {user_text}"
     })
 
-    try:
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://openrouter.ai/",
-                "X-Title": "Noe Telegram Bot"
-            },
-            json={
-                "model": "meta-llama/llama-3.3-70b-instruct:free",
-                "messages": messages,
-                "max_tokens": 100,
-                "temperature": 0.6
-            },
-            timeout=25
-        )
+    for attempt in range(3):
 
-        print("AI STATUS:", response.status_code)
+        try:
 
-        if response.status_code != 200:
-            print("AI ERROR:", response.text)
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://openrouter.ai/",
+                    "X-Title": "Noe Telegram Bot"
+                },
+                json={
+                    "model": "meta-llama/llama-3.3-8b-instruct:free",
+                    "messages": messages,
+                    "max_tokens": 100,
+                    "temperature": 0.6
+                },
+                timeout=30
+            )
+
+            print("AI STATUS:", response.status_code)
+
+            # 429 Rate Limit
+            if response.status_code == 429:
+
+                print(
+                    "AI ERROR 429 - RATE LIMIT"
+                )
+
+                if attempt < 2:
+
+                    wait = 5 * (attempt + 1)
+
+                    print(
+                        f"Retrying in {wait} seconds..."
+                    )
+
+                    time.sleep(wait)
+
+                    continue
+
+                print(
+                    "AI ERROR 429:",
+                    response.text
+                )
+
+                return None
+
+            # Provider error
+            if response.status_code != 200:
+
+                print(
+                    "AI PROVIDER ERROR:",
+                    response.text
+                )
+
+                return None
+
+            try:
+                data = response.json()
+
+            except Exception as e:
+
+                print(
+                    "AI JSON ERROR:",
+                    repr(e)
+                )
+
+                return None
+
+            choices = data.get("choices")
+
+            if not choices:
+
+                print(
+                    "AI EMPTY:",
+                    data
+                )
+
+                return None
+
+            message_data = choices[0].get(
+                "message",
+                {}
+            )
+
+            reply = message_data.get(
+                "content",
+                ""
+            )
+
+            reply = clean_reply(reply)
+
+            if not reply:
+
+                print(
+                    "AI NO TEXT:",
+                    data
+                )
+
+                return None
+
+            # History သိမ်း
+            history[chat_id].append({
+                "role": "user",
+                "content": f"{user_name}: {user_text}"
+            })
+
+            history[chat_id].append({
+                "role": "assistant",
+                "content": reply
+            })
+
+            return reply
+
+        except requests.exceptions.Timeout:
+
+            print(
+                "AI TIMEOUT:",
+                attempt + 1
+            )
+
+            if attempt < 2:
+
+                time.sleep(3)
+
+                continue
+
             return None
 
-        data = response.json()
+        except requests.exceptions.RequestException as e:
 
-        choices = data.get("choices")
+            print(
+                "AI REQUEST ERROR:",
+                repr(e)
+            )
 
-        if not choices:
-            print("AI EMPTY:", data)
             return None
 
-        reply = choices[0].get("message", {}).get("content", "")
+        except Exception as e:
 
-        if not reply:
-            print("AI NO TEXT:", data)
+            print(
+                "AI EXCEPTION:",
+                repr(e)
+            )
+
             return None
 
-        reply = reply.strip()
-
-        reply = re.sub(
-            r"[\U0001F300-\U0001FAFF"
-            r"\U00002700-\U000027BF"
-            r"\U0001F1E6-\U0001F1FF]+",
-            "",
-            reply
-        ).strip()
-
-        if not reply:
-            return None
-
-        history[chat_id].append({
-            "role": "user",
-            "content": f"{user_name}: {user_text}"
-        })
-
-        history[chat_id].append({
-            "role": "assistant",
-            "content": reply
-        })
-
-        return reply
-
-    except Exception as e:
-        print("AI EXCEPTION:", repr(e))
-        return None
+    return None
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     if update.message:
+
         await update.message.reply_text(
             "Noe ရောက်နေပြီ"
         )
@@ -152,6 +275,7 @@ async def check_message(
     if not message or not user or not chat:
         return
 
+    # Bot message မဖတ်
     if user.is_bot:
         return
 
@@ -160,23 +284,36 @@ async def check_message(
     if not text.strip():
         return
 
-    # Link spam စစ်
+    # -----------------------------
+    # LINK SPAM
+    # -----------------------------
+
     if LINK_PATTERN.search(text):
 
-        key = (chat.id, user.id)
+        key = (
+            chat.id,
+            user.id
+        )
 
         warnings[key] += 1
 
         count = warnings[key]
 
         try:
+
             await message.delete()
+
         except Exception as e:
-            print("DELETE ERROR:", repr(e))
+
+            print(
+                "DELETE ERROR:",
+                repr(e)
+            )
 
         if count >= 3:
 
             try:
+
                 await context.bot.restrict_chat_member(
                     chat.id,
                     user.id,
@@ -191,20 +328,36 @@ async def check_message(
                 )
 
             except Exception as e:
-                print("MUTE ERROR:", repr(e))
+
+                print(
+                    "MUTE ERROR:",
+                    repr(e)
+                )
 
             warnings[key] = 0
 
         else:
 
-            await context.bot.send_message(
-                chat.id,
-                f"{user.first_name} Warning {count}/3"
-            )
+            try:
+
+                await context.bot.send_message(
+                    chat.id,
+                    f"{user.first_name} Warning {count}/3"
+                )
+
+            except Exception as e:
+
+                print(
+                    "WARNING MESSAGE ERROR:",
+                    repr(e)
+                )
 
         return
 
-    # စာတိုင်း AI ကိုပို့
+    # -----------------------------
+    # AI CHAT
+    # -----------------------------
+
     reply = await asyncio.to_thread(
         ask_noe,
         chat.id,
@@ -212,26 +365,44 @@ async def check_message(
         text
     )
 
-    # AI မရရင် group ထဲမှာ fallback မပြော
+    # AI reply မရရင် ဘာမှမပို့
     if reply is None:
         return
 
-    await message.reply_text(reply)
+    try:
+
+        await message.reply_text(
+            reply
+        )
+
+    except Exception as e:
+
+        print(
+            "TELEGRAM REPLY ERROR:",
+            repr(e)
+        )
 
 
 def main():
 
     if not TOKEN:
+
         raise RuntimeError(
             "BOT_TOKEN မတွေ့ပါ"
         )
 
     if not OPENROUTER_API_KEY:
+
         raise RuntimeError(
             "OPENROUTER_API_KEY မတွေ့ပါ"
         )
 
-    app = Application.builder().token(TOKEN).build()
+    app = (
+        Application
+        .builder()
+        .token(TOKEN)
+        .build()
+    )
 
     app.add_handler(
         CommandHandler(
@@ -247,7 +418,9 @@ def main():
         )
     )
 
-    print("NOE AI CHAT STARTED")
+    print(
+        "NOE AI CHAT STARTED"
+    )
 
     app.run_polling()
 
