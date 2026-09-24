@@ -1,32 +1,103 @@
 import os
 import re
 import asyncio
-from collections import defaultdict
+from collections import defaultdict, deque
 
 import requests
 
 from telegram import Update, ChatPermissions
 from telegram.ext import (
     Application,
-    MessageHandler,
     CommandHandler,
+    MessageHandler,
     ContextTypes,
     filters,
 )
 
+# =========================
+# ENV
+# =========================
+
 TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+# =========================
+# SETTINGS
+# =========================
+
 warnings = defaultdict(int)
+
+# Each chat keeps a short conversation history
+chat_history = defaultdict(lambda: deque(maxlen=10))
 
 LINK_PATTERN = re.compile(
     r"(https?://|t\.me/|telegram\.me/|www\.)",
     re.IGNORECASE
 )
 
+# =========================
+# NOE AI
+# =========================
 
-def ask_noe(user_text):
+def ask_noe(chat_id, user_name, user_text):
     try:
+        history = list(chat_history[chat_id])
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Your name is Noe. "
+                    "You are a friendly Burmese-speaking chat companion "
+                    "in a Telegram group. "
+
+                    "Talk naturally like a normal person chatting with friends. "
+                    "Do not sound like a customer-service bot. "
+                    "Do not sound formal, robotic, or like an AI assistant. "
+
+                    "Use natural everyday Burmese chat language. "
+                    "Match the user's mood and style. "
+                    "If they are casual, be casual. "
+                    "If they joke, you can joke back. "
+                    "If they are serious, answer seriously. "
+                    "If they are sad, respond warmly. "
+
+                    "Keep normal replies short and conversational. "
+                    "Do not unnecessarily explain things. "
+                    "Do not repeat the user's message. "
+                    "Do not use words like 'ကျွန်ုပ်', 'အသုံးပြုသူ', "
+                    "'ကူညီပေးနိုင်ပါတယ်', or other overly formal AI language. "
+
+                    "Do not introduce yourself as an AI unless asked. "
+                    "If someone directly asks whether you are an AI or bot, "
+                    "answer honestly that you are an AI bot. "
+                    "Never claim to be a real human. "
+
+                    "Remember the recent conversation context and answer "
+                    "based on what was actually said before. "
+
+                    "When someone simply says hello, reply naturally. "
+                    "For example, a simple 'မင်္ဂလာပါ 😄' is enough. "
+
+                    "When someone asks what you are doing, answer casually "
+                    "instead of giving a robotic explanation. "
+
+                    "Do not turn every conversation into a help-desk response. "
+                    "You are here to chat naturally with the group."
+                ),
+            }
+        ]
+
+        # Add recent conversation
+        messages.extend(history)
+
+        messages.append(
+            {
+                "role": "user",
+                "content": f"{user_name}: {user_text}",
+            }
+        )
+
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
@@ -35,23 +106,7 @@ def ask_noe(user_text):
             },
             json={
                 "model": "openrouter/free",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Your name is Noe. "
-                            "You are a friendly Burmese-speaking AI group assistant. "
-                            "Reply naturally, warmly and briefly. "
-                            "Use Burmese when the user speaks Burmese. "
-                            "You are an AI bot, not a real human. "
-                            "Do not claim to be a real person."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": user_text,
-                    },
-                ],
+                "messages": messages,
             },
             timeout=30,
         )
@@ -59,24 +114,62 @@ def ask_noe(user_text):
         if response.status_code != 200:
             print("OPENROUTER ERROR:", response.status_code)
             print(response.text)
-            return f"AI ERROR: {response.status_code}\n{response.text[:500]}"
+            return "ခဏလေးနော် 😅"
 
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+
+        choices = data.get("choices")
+
+        if not choices:
+            print("AI RESPONSE ERROR:", data)
+            return "ဟယ် ဘာပြန်ပြောရမလဲ 😅"
+
+        reply = choices[0]["message"]["content"]
+
+        if not reply:
+            return "ခဏစဉ်းစားနေတယ် 😅"
+
+        reply = reply.strip()
+
+        # Save conversation
+        chat_history[chat_id].append(
+            {
+                "role": "user",
+                "content": f"{user_name}: {user_text}",
+            }
+        )
+
+        chat_history[chat_id].append(
+            {
+                "role": "assistant",
+                "content": reply,
+            }
+        )
+
+        return reply
 
     except Exception as e:
         print("AI ERROR:", repr(e))
-        return "AI ခဏအဆင်မပြေသေးဘူးနော် 😅"
+        return "ခဏလေးနော် 😅"
 
+
+# =========================
+# START
+# =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🎀 Noe AI Online!\n\n"
-        "🤖 Natural AI Reply\n"
-        "🚫 Link spam auto delete\n"
-        "⚠️ 3 Warnings = Auto Mute"
-    )
+    if update.message:
+        await update.message.reply_text(
+            "🎀 Noe ရောက်နေပြီနော် 😄\n\n"
+            "စကားပြောလို့ရတယ်။\n"
+            "🚫 Link Spam Auto Delete\n"
+            "⚠️ 3 Warnings = Auto Mute"
+        )
 
+
+# =========================
+# MESSAGE HANDLER
+# =========================
 
 async def check_message(
     update: Update,
@@ -89,21 +182,33 @@ async def check_message(
     if not message or not user or not chat:
         return
 
+    # Ignore bots
     if user.is_bot:
         return
 
     text = message.text or ""
 
+    if not text.strip():
+        return
+
+    # =========================
+    # LINK SPAM
+    # =========================
+
     if LINK_PATTERN.search(text):
+
         warnings[(chat.id, user.id)] += 1
+
         count = warnings[(chat.id, user.id)]
 
         try:
             await message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            print("DELETE ERROR:", repr(e))
 
+        # 3 warnings = mute
         if count >= 3:
+
             try:
                 await context.bot.restrict_chat_member(
                     chat.id,
@@ -115,7 +220,8 @@ async def check_message(
 
                 await context.bot.send_message(
                     chat.id,
-                    f"🔇 {user.first_name} ကို 3 warnings ပြည့်လို့ mute လုပ်လိုက်ပါပြီ။"
+                    f"🔇 {user.first_name} ကို "
+                    f"3 warnings ပြည့်လို့ mute လုပ်လိုက်ပြီနော်။"
                 )
 
             except Exception as e:
@@ -124,34 +230,57 @@ async def check_message(
             warnings[(chat.id, user.id)] = 0
 
         else:
+
             await context.bot.send_message(
                 chat.id,
-                f"⚠️ {user.first_name} Warning {count}/3"
+                f"⚠️ {user.first_name} "
+                f"Warning {count}/3"
             )
 
         return
+
+    # =========================
+    # AI CHAT
+    # =========================
 
     if not OPENROUTER_API_KEY:
         print("OPENROUTER_API_KEY မတွေ့ပါ")
         return
 
-    reply = await asyncio.to_thread(ask_noe, text)
+    reply = await asyncio.to_thread(
+        ask_noe,
+        chat.id,
+        user.first_name,
+        text
+    )
 
     if reply:
         await message.reply_text(reply)
 
 
+# =========================
+# MAIN
+# =========================
+
 def main():
+
     if not TOKEN:
-        raise RuntimeError("BOT_TOKEN မတွေ့ပါ")
+        raise RuntimeError(
+            "BOT_TOKEN မတွေ့ပါ"
+        )
 
     if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY မတွေ့ပါ")
+        raise RuntimeError(
+            "OPENROUTER_API_KEY မတွေ့ပါ"
+        )
 
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     )
 
     app.add_handler(
@@ -161,7 +290,7 @@ def main():
         )
     )
 
-    print("🎀 Noe AI Group Bot Started")
+    print("🎀 Noe Natural AI Group Bot Started")
 
     app.run_polling()
 
