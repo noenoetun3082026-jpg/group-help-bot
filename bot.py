@@ -60,7 +60,7 @@ def ask_noe(user_text):
         if response.status_code != 200:
             print("OPENROUTER ERROR:", response.status_code)
             print(response.text)
-            return "AI ခဏအဆင်မပြေသေးဘူးနော် 😅"
+            return f"AI ERROR: {response.status_code}\n{response.text[:500]}"
 
         data = response.json()
 
