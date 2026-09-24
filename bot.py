@@ -202,8 +202,8 @@ async def check_message(
         text
     )
 
-    if reply is None:
-        reply = "အင်း"
+    if reply is not None:
+    await message.reply_text(reply)
 
     await message.reply_text(reply)
 
