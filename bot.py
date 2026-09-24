@@ -62,7 +62,6 @@ def ask_noe(user_text):
             return f"AI ERROR: {response.status_code}\n{response.text[:500]}"
 
         data = response.json()
-
         return data["choices"][0]["message"]["content"]
 
     except Exception as e:
@@ -70,10 +69,7 @@ def ask_noe(user_text):
         return "AI ခဏအဆင်မပြေသေးဘူးနော် 😅"
 
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎀 Noe AI Online!\n\n"
         "🤖 Natural AI Reply\n"
@@ -98,7 +94,6 @@ async def check_message(
 
     text = message.text or ""
 
-    # Link spam
     if LINK_PATTERN.search(text):
         warnings[(chat.id, user.id)] += 1
         count = warnings[(chat.id, user.id)]
@@ -136,12 +131,10 @@ async def check_message(
 
         return
 
-    # AI reply
     if not OPENROUTER_API_KEY:
         print("OPENROUTER_API_KEY မတွေ့ပါ")
         return
 
-    # requests က sync ဖြစ်လို့ background thread ထဲ run
     reply = await asyncio.to_thread(ask_noe, text)
 
     if reply:
@@ -175,5 +168,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
-                            
