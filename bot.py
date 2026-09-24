@@ -14,20 +14,10 @@ from telegram.ext import (
     filters,
 )
 
-# =========================
-# ENV
-# =========================
-
 TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# =========================
-# SETTINGS
-# =========================
-
 warnings = defaultdict(int)
-
-# Each chat keeps a short conversation history
 chat_history = defaultdict(lambda: deque(maxlen=10))
 
 LINK_PATTERN = re.compile(
@@ -35,9 +25,6 @@ LINK_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# =========================
-# NOE AI
-# =========================
 
 def ask_noe(chat_id, user_name, user_text):
     try:
@@ -48,47 +35,30 @@ def ask_noe(chat_id, user_name, user_text):
                 "role": "system",
                 "content": (
                     "Your name is Noe. "
-                    "You are a friendly Burmese-speaking chat companion "
-                    "in a Telegram group. "
-
-                    "Talk naturally like a normal person chatting with friends. "
-                    "Do not sound like a customer-service bot. "
-                    "Do not sound formal, robotic, or like an AI assistant. "
-
-                    "Use natural everyday Burmese chat language. "
-                    "Match the user's mood and style. "
-                    "If they are casual, be casual. "
-                    "If they joke, you can joke back. "
-                    "If they are serious, answer seriously. "
-                    "If they are sad, respond warmly. "
-
-                    "Keep normal replies short and conversational. "
-                    "Do not unnecessarily explain things. "
-                    "Do not repeat the user's message. "
-                    "Do not use words like 'ကျွန်ုပ်', 'အသုံးပြုသူ', "
-                    "'ကူညီပေးနိုင်ပါတယ်', or other overly formal AI language. "
-
-                    "Do not introduce yourself as an AI unless asked. "
-                    "If someone directly asks whether you are an AI or bot, "
+                    "You chat with people in a Telegram group. "
+                    "Speak natural Burmese like a close friend. "
+                    "Keep replies short, simple and casual. "
+                    "Do not sound like an AI, assistant or customer service. "
+                    "Do not use formal Burmese. "
+                    "Do not use words such as ကျွန်ုပ်, အသုံးပြုသူ, "
+                    "ကူညီပေးနိုင်ပါတယ်, သေချာစွာပြောပါ. "
+                    "Do not repeat what the user said. "
+                    "Answer the actual meaning of the message. "
+                    "Match the user's way of speaking. "
+                    "If the user is casual, be casual. "
+                    "If the user jokes, joke naturally. "
+                    "If the user asks a simple question, give a simple answer. "
+                    "Do not give long explanations unless necessary. "
+                    "Never use emojis or emoticons. "
+                    "Do not add unnecessary greetings or explanations. "
+                    "Do not say you are an AI unless the user asks. "
+                    "If directly asked whether you are an AI or bot, "
                     "answer honestly that you are an AI bot. "
-                    "Never claim to be a real human. "
-
-                    "Remember the recent conversation context and answer "
-                    "based on what was actually said before. "
-
-                    "When someone simply says hello, reply naturally. "
-                    "For example, a simple 'မင်္ဂလာပါ 😄' is enough. "
-
-                    "When someone asks what you are doing, answer casually "
-                    "instead of giving a robotic explanation. "
-
-                    "Do not turn every conversation into a help-desk response. "
-                    "You are here to chat naturally with the group."
+                    "Never claim to be a real human."
                 ),
             }
         ]
 
-        # Add recent conversation
         messages.extend(history)
 
         messages.append(
@@ -114,24 +84,22 @@ def ask_noe(chat_id, user_name, user_text):
         if response.status_code != 200:
             print("OPENROUTER ERROR:", response.status_code)
             print(response.text)
-            return "ခဏလေးနော် 😅"
+            return "ခဏလေး"
 
         data = response.json()
-
         choices = data.get("choices")
 
         if not choices:
             print("AI RESPONSE ERROR:", data)
-            return "ဟယ် ဘာပြန်ပြောရမလဲ 😅"
+            return "ခဏလေး"
 
         reply = choices[0]["message"]["content"]
 
         if not reply:
-            return "ခဏစဉ်းစားနေတယ် 😅"
+            return "မသိသေးဘူး"
 
         reply = reply.strip()
 
-        # Save conversation
         chat_history[chat_id].append(
             {
                 "role": "user",
@@ -150,26 +118,15 @@ def ask_noe(chat_id, user_name, user_text):
 
     except Exception as e:
         print("AI ERROR:", repr(e))
-        return "ခဏလေးနော် 😅"
+        return "ခဏလေး"
 
-
-# =========================
-# START
-# =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(
-            "🎀 Noe ရောက်နေပြီနော် 😄\n\n"
-            "စကားပြောလို့ရတယ်။\n"
-            "🚫 Link Spam Auto Delete\n"
-            "⚠️ 3 Warnings = Auto Mute"
+            "Noe ရောက်နေပြီ"
         )
 
-
-# =========================
-# MESSAGE HANDLER
-# =========================
 
 async def check_message(
     update: Update,
@@ -182,7 +139,6 @@ async def check_message(
     if not message or not user or not chat:
         return
 
-    # Ignore bots
     if user.is_bot:
         return
 
@@ -191,14 +147,8 @@ async def check_message(
     if not text.strip():
         return
 
-    # =========================
-    # LINK SPAM
-    # =========================
-
     if LINK_PATTERN.search(text):
-
         warnings[(chat.id, user.id)] += 1
-
         count = warnings[(chat.id, user.id)]
 
         try:
@@ -206,9 +156,7 @@ async def check_message(
         except Exception as e:
             print("DELETE ERROR:", repr(e))
 
-        # 3 warnings = mute
         if count >= 3:
-
             try:
                 await context.bot.restrict_chat_member(
                     chat.id,
@@ -220,8 +168,7 @@ async def check_message(
 
                 await context.bot.send_message(
                     chat.id,
-                    f"🔇 {user.first_name} ကို "
-                    f"3 warnings ပြည့်လို့ mute လုပ်လိုက်ပြီနော်။"
+                    f"{user.first_name} ကို 3 warnings ပြည့်လို့ mute လုပ်လိုက်ပြီ"
                 )
 
             except Exception as e:
@@ -230,18 +177,12 @@ async def check_message(
             warnings[(chat.id, user.id)] = 0
 
         else:
-
             await context.bot.send_message(
                 chat.id,
-                f"⚠️ {user.first_name} "
-                f"Warning {count}/3"
+                f"{user.first_name} Warning {count}/3"
             )
 
         return
-
-    # =========================
-    # AI CHAT
-    # =========================
 
     if not OPENROUTER_API_KEY:
         print("OPENROUTER_API_KEY မတွေ့ပါ")
@@ -258,29 +199,17 @@ async def check_message(
         await message.reply_text(reply)
 
 
-# =========================
-# MAIN
-# =========================
-
 def main():
-
     if not TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN မတွေ့ပါ"
-        )
+        raise RuntimeError("BOT_TOKEN မတွေ့ပါ")
 
     if not OPENROUTER_API_KEY:
-        raise RuntimeError(
-            "OPENROUTER_API_KEY မတွေ့ပါ"
-        )
+        raise RuntimeError("OPENROUTER_API_KEY မတွေ့ပါ")
 
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
+        CommandHandler("start", start)
     )
 
     app.add_handler(
@@ -290,7 +219,7 @@ def main():
         )
     )
 
-    print("🎀 Noe Natural AI Group Bot Started")
+    print("Noe Natural Chat Bot Started")
 
     app.run_polling()
 
