@@ -1,6 +1,10 @@
+```python
 import os
 import re
+import asyncio
 from collections import defaultdict
+
+import requests
 
 from telegram import Update, ChatPermissions
 from telegram.ext import (
@@ -10,8 +14,6 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-
-import requests
 
 TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -55,16 +57,24 @@ def ask_noe(user_text):
             timeout=30,
         )
 
+        if response.status_code != 200:
+            print("OPENROUTER ERROR:", response.status_code)
+            print(response.text)
+            return "AI ခဏအဆင်မပြေသေးဘူးနော် 😅"
+
         data = response.json()
 
         return data["choices"][0]["message"]["content"]
 
     except Exception as e:
-        print("AI ERROR:", e)
-        return "အခုခဏ AI ပြန်မဖြေနိုင်သေးဘူးနော် 😅"
+        print("AI ERROR:", repr(e))
+        return "AI ခဏအဆင်မပြေသေးဘူးနော် 😅"
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     await update.message.reply_text(
         "🎀 Noe AI Online!\n\n"
         "🤖 Natural AI Reply\n"
@@ -113,8 +123,9 @@ async def check_message(
                     chat.id,
                     f"🔇 {user.first_name} ကို 3 warnings ပြည့်လို့ mute လုပ်လိုက်ပါပြီ။"
                 )
-            except Exception:
-                pass
+
+            except Exception as e:
+                print("MUTE ERROR:", repr(e))
 
             warnings[(chat.id, user.id)] = 0
 
@@ -128,9 +139,11 @@ async def check_message(
 
     # AI reply
     if not OPENROUTER_API_KEY:
+        print("OPENROUTER_API_KEY မတွေ့ပါ")
         return
 
-    reply = ask_noe(text)
+    # requests က sync ဖြစ်လို့ background thread ထဲ run
+    reply = await asyncio.to_thread(ask_noe, text)
 
     if reply:
         await message.reply_text(reply)
@@ -145,7 +158,9 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
+    app.add_handler(
+        CommandHandler("start", start)
+    )
 
     app.add_handler(
         MessageHandler(
@@ -155,8 +170,11 @@ def main():
     )
 
     print("🎀 Noe AI Group Bot Started")
+
     app.run_polling()
 
 
 if __name__ == "__main__":
     main()
+```
+                            
