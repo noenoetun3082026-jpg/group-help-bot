@@ -1127,4 +1127,4 @@ async def sticker_message(
 
             and item != LAST_STICKER.get(
                 message.chat.id
-    )
+)
