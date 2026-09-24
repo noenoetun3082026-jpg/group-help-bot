@@ -14,13 +14,20 @@ from telegram.ext import (
     filters,
 )
 
+# =========================
+# CONFIG
+# =========================
+
 TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 
 warnings = defaultdict(int)
 history = defaultdict(lambda: deque(maxlen=10))
 
-# Chat တစ်ခုချင်းစီ request အကြား အနည်းဆုံး 2 စက္ကန့်
+# User တစ်ယောက်ချင်းစီ AI request အကြား
+# အနည်းဆုံး 2 seconds ခြား
 last_request = defaultdict(float)
 REQUEST_COOLDOWN = 2
 
@@ -30,39 +37,62 @@ LINK_PATTERN = re.compile(
 )
 
 
-def clean_reply(reply):
+# =========================
+# AI CLEAN
+# =========================
 
-    if not reply:
+def clean_reply(text):
+
+    if not text:
         return None
 
-    reply = str(reply).strip()
+    if isinstance(text, list):
+        parts = []
 
-    # Emoji ဖယ်
-    reply = re.sub(
+        for item in text:
+            if isinstance(item, dict):
+                value = item.get("text")
+
+                if value:
+                    parts.append(str(value))
+
+            elif isinstance(item, str):
+                parts.append(item)
+
+        text = "".join(parts)
+
+    text = str(text).strip()
+
+    # Emoji ဖျက်
+    text = re.sub(
         r"[\U0001F300-\U0001FAFF"
         r"\U00002700-\U000027BF"
         r"\U0001F1E6-\U0001F1FF]+",
         "",
-        reply
-    ).strip()
+        text
+    )
 
-    if not reply:
+    text = text.strip()
+
+    if not text:
         return None
 
-    return reply
+    return text
 
+
+# =========================
+# ASK AI
+# =========================
 
 def ask_noe(chat_id, user_name, user_text):
 
-    # Request cooldown
     now = time.time()
 
+    # Request အရမ်းမြန်မသွားအောင်
     elapsed = now - last_request[chat_id]
 
     if elapsed < REQUEST_COOLDOWN:
-        time.sleep(
-            REQUEST_COOLDOWN - elapsed
-        )
+        time.sleep(REQUEST_COOLDOWN - elapsed)
 
     last_request[chat_id] = time.time()
 
@@ -96,239 +126,156 @@ def ask_noe(chat_id, user_name, user_text):
         }
     ]
 
-    # အရင် chat history
-    messages.extend(
-        list(history[chat_id])
-    )
+    # Previous conversation
+    messages.extend(list(history[chat_id]))
 
-    # လက်ရှိစာ
+    # Current message
     messages.append({
         "role": "user",
         "content": f"{user_name}: {user_text}"
     })
 
-    # AI request 3 ကြိမ်အထိ
-    for attempt in range(3):
+    # =========================
+    # TRY REQUEST
+    # =========================
+
+    max_attempts = 4
+
+    for attempt in range(1, max_attempts + 1):
 
         try:
 
+            print(
+                f"AI REQUEST: attempt={attempt} "
+                f"chat={chat_id} "
+                f"user={user_name}"
+            )
+
             response = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
+
                 headers={
-                    "Authorization": (
-                        f"Bearer {OPENROUTER_API_KEY}"
-                    ),
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
-                    "HTTP-Referer": (
-                        "https://openrouter.ai/"
-                    ),
+                    "HTTP-Referer": "https://openrouter.ai/",
                     "X-Title": "Noe Telegram Bot"
                 },
+
                 json={
-                    "model": (
-                        "meta-llama/"
-                        "llama-3.3-70b-instruct:free"
-                    ),
+                    "model": MODEL,
                     "messages": messages,
                     "max_tokens": 100,
                     "temperature": 0.6
                 },
+
                 timeout=30
             )
 
-            print(
-                "AI STATUS:",
-                response.status_code
-            )
+            print("AI STATUS:", response.status_code)
 
-            # -------------------------
-            # 429 RATE LIMIT
-            # -------------------------
+            # =========================
+            # SUCCESS
+            # =========================
+
+            if response.status_code == 200:
+
+                try:
+                    data = response.json()
+                except Exception as e:
+                    print("AI JSON ERROR:", repr(e))
+                    return None
+
+                choices = data.get("choices")
+
+                if not choices:
+                    print("AI EMPTY CHOICES:", data)
+                    return None
+
+                message_data = choices[0].get("message", {})
+
+                if not isinstance(message_data, dict):
+                    print("AI BAD MESSAGE:", message_data)
+                    return None
+
+                content = message_data.get("content")
+
+                reply = clean_reply(content)
+
+                if not reply:
+                    print("AI NO TEXT:", data)
+                    return None
+
+                # =========================
+                # SAVE HISTORY
+                # =========================
+
+                history[chat_id].append({
+                    "role": "user",
+                    "content": f"{user_name}: {user_text}"
+                })
+
+                history[chat_id].append({
+                    "role": "assistant",
+                    "content": reply
+                })
+
+                print("AI OK:", reply)
+
+                return reply
+
+            # =========================
+            # RATE LIMIT 429
+            # =========================
 
             if response.status_code == 429:
 
-                print(
-                    "AI ERROR 429:",
-                    response.text
-                )
+                print("AI 429 RATE LIMIT")
 
-                if attempt < 2:
+                if attempt < max_attempts:
 
-                    wait_seconds = (
-                        5 * (attempt + 1)
+                    # Retry-After ရှိရင် အသုံးပြု
+                    retry_after = response.headers.get(
+                        "Retry-After"
                     )
+
+                    try:
+                        wait_time = float(retry_after)
+                    except Exception:
+                        wait_time = attempt * 5
+
+                    # အများကြီးမစောင့်စေဖို့
+                    wait_time = min(wait_time, 30)
 
                     print(
-                        "RETRY IN:",
-                        wait_seconds,
-                        "seconds"
+                        f"AI 429 WAIT: {wait_time} seconds"
                     )
 
-                    time.sleep(
-                        wait_seconds
-                    )
+                    time.sleep(wait_time)
 
                     continue
 
+                print("AI 429 FINAL")
                 return None
 
-            # -------------------------
-            # OTHER API ERROR
-            # -------------------------
-
-            if response.status_code != 200:
-
-                print(
-                    "AI PROVIDER ERROR:",
-                    response.text
-                )
-
-                return None
-
-            # -------------------------
-            # JSON
-            # -------------------------
-
-            try:
-
-                data = response.json()
-
-            except Exception as e:
-
-                print(
-                    "AI JSON ERROR:",
-                    repr(e)
-                )
-
-                return None
-
-            # -------------------------
-            # CHOICES
-            # -------------------------
-
-            choices = data.get(
-                "choices"
-            )
-
-            if not choices:
-
-                print(
-                    "AI EMPTY:",
-                    data
-                )
-
-                return None
-
-            # -------------------------
-            # MESSAGE
-            # -------------------------
-
-            message_data = choices[0].get(
-                "message"
-            )
-
-            if not isinstance(
-                message_data,
-                dict
-            ):
-
-                print(
-                    "AI MESSAGE ERROR:",
-                    data
-                )
-
-                return None
-
-            reply = message_data.get(
-                "content"
-            )
-
-            # -------------------------
-            # CONTENT
-            # -------------------------
-
-            if isinstance(
-                reply,
-                list
-            ):
-
-                parts = []
-
-                for item in reply:
-
-                    if isinstance(
-                        item,
-                        dict
-                    ):
-
-                        text = item.get(
-                            "text"
-                        )
-
-                        if text:
-                            parts.append(
-                                str(text)
-                            )
-
-                reply = "".join(parts)
-
-            if not reply:
-
-                print(
-                    "AI NO TEXT:",
-                    data
-                )
-
-                return None
-
-            reply = clean_reply(
-                reply
-            )
-
-            if not reply:
-
-                print(
-                    "AI CLEANED TO EMPTY"
-                )
-
-                return None
-
-            # -------------------------
-            # SAVE HISTORY
-            # -------------------------
-
-            history[chat_id].append({
-                "role": "user",
-                "content": (
-                    f"{user_name}: "
-                    f"{user_text}"
-                )
-            })
-
-            history[chat_id].append({
-                "role": "assistant",
-                "content": reply
-            })
+            # =========================
+            # OTHER ERRORS
+            # =========================
 
             print(
-                "AI REPLY:",
-                reply
+                "AI ERROR:",
+                response.status_code,
+                response.text[:1000]
             )
 
-            return reply
+            return None
 
-        # -------------------------
-        # TIMEOUT
-        # -------------------------
-
-        except requests.exceptions.Timeout:
+        except requests.Timeout:
 
             print(
-                "AI TIMEOUT:",
-                attempt + 1
+                f"AI TIMEOUT attempt={attempt}"
             )
 
-            if attempt < 2:
+            if attempt < max_attempts:
 
                 time.sleep(3)
 
@@ -336,22 +283,20 @@ def ask_noe(chat_id, user_name, user_text):
 
             return None
 
-        # -------------------------
-        # REQUEST ERROR
-        # -------------------------
-
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
 
             print(
                 "AI REQUEST ERROR:",
                 repr(e)
             )
 
-            return None
+            if attempt < max_attempts:
 
-        # -------------------------
-        # UNKNOWN ERROR
-        # -------------------------
+                time.sleep(3)
+
+                continue
+
+            return None
 
         except Exception as e:
 
@@ -365,6 +310,10 @@ def ask_noe(chat_id, user_name, user_text):
     return None
 
 
+# =========================
+# /START
+# =========================
+
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -376,6 +325,10 @@ async def start(
             "Noe ရောက်နေပြီ"
         )
 
+
+# =========================
+# MESSAGE CHECK
+# =========================
 
 async def check_message(
     update: Update,
@@ -404,20 +357,29 @@ async def check_message(
     if not text.strip():
         return
 
+    print(
+        f"MESSAGE: chat={chat.id} "
+        f"user={user.first_name} "
+        f"text={text}"
+    )
+
     # =========================
     # LINK SPAM
     # =========================
 
     if LINK_PATTERN.search(text):
 
-        key = (
-            chat.id,
-            user.id
-        )
+        key = (chat.id, user.id)
 
         warnings[key] += 1
 
         count = warnings[key]
+
+        print(
+            f"LINK WARNING: "
+            f"{user.first_name} "
+            f"{count}/3"
+        )
 
         try:
 
@@ -429,6 +391,10 @@ async def check_message(
                 "DELETE ERROR:",
                 repr(e)
             )
+
+        # =========================
+        # 3 WARNINGS = MUTE
+        # =========================
 
         if count >= 3:
 
@@ -444,11 +410,8 @@ async def check_message(
 
                 await context.bot.send_message(
                     chat.id,
-                    (
-                        f"{user.first_name} "
-                        "ကို 3 warnings ပြည့်လို့ "
-                        "mute လုပ်လိုက်ပြီ"
-                    )
+                    f"{user.first_name} ကို "
+                    f"3 warnings ပြည့်လို့ mute လုပ်လိုက်ပြီ"
                 )
 
             except Exception as e:
@@ -466,24 +429,23 @@ async def check_message(
 
                 await context.bot.send_message(
                     chat.id,
-                    (
-                        f"{user.first_name} "
-                        f"Warning {count}/3"
-                    )
+                    f"{user.first_name} Warning {count}/3"
                 )
 
             except Exception as e:
 
                 print(
-                    "WARNING ERROR:",
+                    "WARNING MESSAGE ERROR:",
                     repr(e)
                 )
 
         return
 
     # =========================
-    # AI CHAT
+    # SEND TO AI
     # =========================
+
+    print("SENDING TO AI...")
 
     reply = await asyncio.to_thread(
         ask_noe,
@@ -492,15 +454,29 @@ async def check_message(
         text
     )
 
-    # AI reply မရရင် ဘာမှမပို့
+    # =========================
+    # AI FAILED
+    # =========================
+
     if reply is None:
+
+        print(
+            "AI REPLY FAILED - NO MESSAGE SENT"
+        )
+
         return
+
+    # =========================
+    # SEND AI REPLY
+    # =========================
 
     try:
 
         await message.reply_text(
             reply
         )
+
+        print("TELEGRAM REPLY SENT")
 
     except Exception as e:
 
@@ -510,11 +486,26 @@ async def check_message(
         )
 
 
-def main():
+# =========================
+# ERROR HANDLER
+# =========================
 
-    # =========================
-    # CHECK ENV
-    # =========================
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    print(
+        "TELEGRAM ERROR:",
+        repr(context.error)
+    )
+
+
+# =========================
+# MAIN
+# =========================
+
+def main():
 
     if not TOKEN:
 
@@ -528,9 +519,9 @@ def main():
             "OPENROUTER_API_KEY မတွေ့ပါ"
         )
 
-    # =========================
-    # TELEGRAM APP
-    # =========================
+    print("BOT TOKEN: OK")
+    print("OPENROUTER KEY: OK")
+    print("MODEL:", MODEL)
 
     app = (
         Application
@@ -539,7 +530,6 @@ def main():
         .build()
     )
 
-    # /start
     app.add_handler(
         CommandHandler(
             "start",
@@ -547,7 +537,6 @@ def main():
         )
     )
 
-    # Normal messages
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -555,20 +544,22 @@ def main():
         )
     )
 
-    print(
-        "=============================="
+    app.add_error_handler(
+        error_handler
     )
 
     print(
         "NOE AI CHAT STARTED"
     )
 
-    print(
-        "=============================="
+    app.run_polling(
+        drop_pending_updates=True
     )
 
-    app.run_polling()
 
+# =========================
+# RUN
+# =========================
 
 if __name__ == "__main__":
     main()
