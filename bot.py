@@ -11,7 +11,10 @@ from telegram.ext import (
     filters,
 )
 
+import requests
+
 TOKEN = os.getenv("BOT_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 warnings = defaultdict(int)
 
@@ -20,19 +23,51 @@ LINK_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-REPLIES = {
-    "မင်္ဂလာပါ": "မင်္ဂလာပါ 😄 ဘာလုပ်နေကြတာလဲ?",
-    "ဟယ်လို": "ဟယ်လို 👋",
-    "hello": "Hello 😄",
-    "hi": "Hi 👋",
-    "ဟုတ်": "ဟုတ်ပါတယ် 😄",
-    "ကျေးဇူး": "ရပါတယ်ဗျာ ❤️",
-}
+
+def ask_noe(user_text):
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "openrouter/free",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Your name is Noe. "
+                            "You are a friendly Burmese-speaking AI group assistant. "
+                            "Reply naturally, warmly and briefly. "
+                            "Use Burmese when the user speaks Burmese. "
+                            "You are an AI bot, not a real human. "
+                            "Do not claim to be a real person."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": user_text,
+                    },
+                ],
+            },
+            timeout=30,
+        )
+
+        data = response.json()
+
+        return data["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        print("AI ERROR:", e)
+        return "အခုခဏ AI ပြန်မဖြေနိုင်သေးဘူးနော် 😅"
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Group Help Bot Online!\n\n"
+        "🎀 Noe AI Online!\n\n"
+        "🤖 Natural AI Reply\n"
         "🚫 Link spam auto delete\n"
         "⚠️ 3 Warnings = Auto Mute"
     )
@@ -49,7 +84,6 @@ async def check_message(
     if not message or not user or not chat:
         return
 
-    # Bot message ကို မစစ်
     if user.is_bot:
         return
 
@@ -70,7 +104,9 @@ async def check_message(
                 await context.bot.restrict_chat_member(
                     chat.id,
                     user.id,
-                    permissions=ChatPermissions(can_send_messages=False)
+                    permissions=ChatPermissions(
+                        can_send_messages=False
+                    )
                 )
 
                 await context.bot.send_message(
@@ -90,22 +126,27 @@ async def check_message(
 
         return
 
-    # Auto reply
-    lower_text = text.lower()
+    # AI reply
+    if not OPENROUTER_API_KEY:
+        return
 
-    for keyword, reply in REPLIES.items():
-        if keyword.lower() in lower_text:
-            await message.reply_text(reply)
-            break
+    reply = ask_noe(text)
+
+    if reply:
+        await message.reply_text(reply)
 
 
 def main():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN မတွေ့ပါ")
 
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY မတွေ့ပါ")
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -113,7 +154,7 @@ def main():
         )
     )
 
-    print("🤖 Group Help Bot Started")
+    print("🎀 Noe AI Group Bot Started")
     app.run_polling()
 
 
