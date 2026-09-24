@@ -1,11 +1,7 @@
 import os
-import re
-import asyncio
-import time
-import requests
-from collections import defaultdict, deque
+import json
 
-from telegram import Update, ChatPermissions
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -14,341 +10,274 @@ from telegram.ext import (
     filters,
 )
 
-# =========================
-# CONFIG
-# =========================
-
 TOKEN = os.getenv("BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-
-MODEL = "meta-llama/llama-3.3-70b-instruct:free"
-
-warnings = defaultdict(int)
-history = defaultdict(lambda: deque(maxlen=10))
-
-# User တစ်ယောက်ချင်းစီ AI request အကြား
-# အနည်းဆုံး 2 seconds ခြား
-last_request = defaultdict(float)
-REQUEST_COOLDOWN = 2
-
-LINK_PATTERN = re.compile(
-    r"(https?://|t\.me/|telegram\.me/|www\.)",
-    re.IGNORECASE
-)
+DATA_FILE = "replies.json"
 
 
-# =========================
-# AI CLEAN
-# =========================
+def load_replies():
+    if not os.path.exists(DATA_FILE):
+        return {}
 
-def clean_reply(text):
-
-    if not text:
-        return None
-
-    if isinstance(text, list):
-        parts = []
-
-        for item in text:
-            if isinstance(item, dict):
-                value = item.get("text")
-
-                if value:
-                    parts.append(str(value))
-
-            elif isinstance(item, str):
-                parts.append(item)
-
-        text = "".join(parts)
-
-    text = str(text).strip()
-
-    # Emoji ဖျက်
-    text = re.sub(
-        r"[\U0001F300-\U0001FAFF"
-        r"\U00002700-\U000027BF"
-        r"\U0001F1E6-\U0001F1FF]+",
-        "",
-        text
-    )
-
-    text = text.strip()
-
-    if not text:
-        return None
-
-    return text
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print("LOAD ERROR:", repr(e))
+        return {}
 
 
-# =========================
-# ASK AI
-# =========================
+replies = load_replies()
 
-def ask_noe(chat_id, user_name, user_text):
 
-    now = time.time()
-
-    # Request အရမ်းမြန်မသွားအောင်
-    elapsed = now - last_request[chat_id]
-
-    if elapsed < REQUEST_COOLDOWN:
-        time.sleep(REQUEST_COOLDOWN - elapsed)
-
-    last_request[chat_id] = time.time()
-
-    messages = [
-        {
-            "role": "system",
-            "content": """
-မင်းက Noe ဆိုတဲ့ Telegram group chat bot ပါ။
-
-မြန်မာသူငယ်ချင်းတစ်ယောက်နဲ့ စကားပြောသလို သဘာဝကျကျ ပြောပါ။
-
-စည်းကမ်းများ:
-- မြန်မာစကားကို နေ့စဉ်သုံးစကားပုံစံနဲ့ ပြောပါ။
-- စကားတိုတိုနဲ့ တိုက်ရိုက်ဖြေပါ။
-- အရမ်း formal မပြောပါနဲ့။
-- "ကျွန်ုပ်", "အသုံးပြုသူ", "AI assistant" စတဲ့ စကားတွေ မသုံးပါနဲ့။
-- Emoji လုံးဝ မသုံးပါနဲ့။
-- User ပြောတာကို ပြန်ကူးမပြောပါနဲ့။
-- User ရဲ့ အဓိပ္ပာယ်ကို နားလည်ပြီး တိုက်ရိုက်ဖြေပါ။
-- အရင် message တွေကို context အဖြစ် အသုံးပြုပါ။
-- မေးခွန်းတစ်ခုကို မေးခွန်းနဲ့ ပြန်မဖြေပါနဲ့။
-- အဓိပ္ပာယ်မရှိတဲ့ စကား မဖန်တီးပါနဲ့။
-- User က ရင်းနှီးတဲ့ပုံစံနဲ့ပြောရင် ရင်းနှီးတဲ့ပုံစံနဲ့ ပြန်ပါ။
-- လိုအပ်ရင် တစ်ကြောင်းတည်းနဲ့ ဖြေပါ။
-- အကြောင်းအရာရှင်းပြဖို့လိုမှသာ ပိုရှည်ပါ။
-- User က "ဘယ်မှာ" လို့မေးရင် အရင် context ကိုကြည့်ပြီး ဖြေပါ။
-- User က "ဘာလုပ်" လို့ပြောရင် အရင်စကားနဲ့ဆက်စပ်ပြီး ဖြေပါ။
-- Bot/AI ဟုတ်လားလို့ တိုက်ရိုက်မေးရင် ရိုးသားစွာ ဖြေပါ။
-- ကိုယ့်ကိုယ်ကို လူအစစ်လို့ မပြောပါနဲ့။
-"""
-        }
-    ]
-
-    # Previous conversation
-    messages.extend(list(history[chat_id]))
-
-    # Current message
-    messages.append({
-        "role": "user",
-        "content": f"{user_name}: {user_text}"
-    })
-
-    # =========================
-    # TRY REQUEST
-    # =========================
-
-    max_attempts = 4
-
-    for attempt in range(1, max_attempts + 1):
-
-        try:
-
-            print(
-                f"AI REQUEST: attempt={attempt} "
-                f"chat={chat_id} "
-                f"user={user_name}"
+def save_replies():
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                replies,
+                f,
+                ensure_ascii=False,
+                indent=2
             )
 
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+        print("REPLIES SAVED")
 
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://openrouter.ai/",
-                    "X-Title": "Noe Telegram Bot"
-                },
-
-                json={
-                    "model": MODEL,
-                    "messages": messages,
-                    "max_tokens": 100,
-                    "temperature": 0.6
-                },
-
-                timeout=30
-            )
-
-            print("AI STATUS:", response.status_code)
-
-            # =========================
-            # SUCCESS
-            # =========================
-
-            if response.status_code == 200:
-
-                try:
-                    data = response.json()
-                except Exception as e:
-                    print("AI JSON ERROR:", repr(e))
-                    return None
-
-                choices = data.get("choices")
-
-                if not choices:
-                    print("AI EMPTY CHOICES:", data)
-                    return None
-
-                message_data = choices[0].get("message", {})
-
-                if not isinstance(message_data, dict):
-                    print("AI BAD MESSAGE:", message_data)
-                    return None
-
-                content = message_data.get("content")
-
-                reply = clean_reply(content)
-
-                if not reply:
-                    print("AI NO TEXT:", data)
-                    return None
-
-                # =========================
-                # SAVE HISTORY
-                # =========================
-
-                history[chat_id].append({
-                    "role": "user",
-                    "content": f"{user_name}: {user_text}"
-                })
-
-                history[chat_id].append({
-                    "role": "assistant",
-                    "content": reply
-                })
-
-                print("AI OK:", reply)
-
-                return reply
-
-            # =========================
-            # RATE LIMIT 429
-            # =========================
-
-            if response.status_code == 429:
-
-                print("AI 429 RATE LIMIT")
-
-                if attempt < max_attempts:
-
-                    # Retry-After ရှိရင် အသုံးပြု
-                    retry_after = response.headers.get(
-                        "Retry-After"
-                    )
-
-                    try:
-                        wait_time = float(retry_after)
-                    except Exception:
-                        wait_time = attempt * 5
-
-                    # အများကြီးမစောင့်စေဖို့
-                    wait_time = min(wait_time, 30)
-
-                    print(
-                        f"AI 429 WAIT: {wait_time} seconds"
-                    )
-
-                    time.sleep(wait_time)
-
-                    continue
-
-                print("AI 429 FINAL")
-                return None
-
-            # =========================
-            # OTHER ERRORS
-            # =========================
-
-            print(
-                "AI ERROR:",
-                response.status_code,
-                response.text[:1000]
-            )
-
-            return None
-
-        except requests.Timeout:
-
-            print(
-                f"AI TIMEOUT attempt={attempt}"
-            )
-
-            if attempt < max_attempts:
-
-                time.sleep(3)
-
-                continue
-
-            return None
-
-        except requests.RequestException as e:
-
-            print(
-                "AI REQUEST ERROR:",
-                repr(e)
-            )
-
-            if attempt < max_attempts:
-
-                time.sleep(3)
-
-                continue
-
-            return None
-
-        except Exception as e:
-
-            print(
-                "AI EXCEPTION:",
-                repr(e)
-            )
-
-            return None
-
-    return None
+    except Exception as e:
+        print("SAVE ERROR:", repr(e))
 
 
-# =========================
-# /START
-# =========================
+async def is_admin(update, context):
+    user = update.effective_user
+    chat = update.effective_chat
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+    if not user or not chat:
+        return False
 
-    if update.message:
+    if chat.type == "private":
+        return True
 
-        await update.message.reply_text(
-            "Noe ရောက်နေပြီ"
+    try:
+        member = await context.bot.get_chat_member(
+            chat.id,
+            user.id
         )
 
+        return member.status in (
+            "administrator",
+            "creator"
+        )
 
-# =========================
-# MESSAGE CHECK
-# =========================
+    except Exception as e:
+        print("ADMIN CHECK ERROR:", repr(e))
+        return False
 
-async def check_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    await update.message.reply_text(
+        "Group Reply Bot အလုပ်လုပ်နေပါပြီ။\n\n"
+        "/help နဲ့ command တွေကြည့်နိုင်ပါတယ်။"
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    await update.message.reply_text(
+        "Group Reply Bot Commands\n\n"
+        "/setreply စာ | ပြန်စာ\n"
+        "ဥပမာ:\n"
+        "/setreply မင်္ဂလာပါ | မင်္ဂလာပါဗျာ\n\n"
+        "/listreply\n"
+        "သတ်မှတ်ထားတဲ့ reply တွေကြည့်ရန်\n\n"
+        "/delreply စာ\n"
+        "Reply တစ်ခုဖျက်ရန်\n\n"
+        "/clearreply\n"
+        "ဒီ GP ရဲ့ reply အားလုံးဖျက်ရန်"
+    )
+
+
+async def set_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    if not update.effective_chat:
+        return
+
+    if not await is_admin(update, context):
+        await update.message.reply_text(
+            "ဒီ command ကို Admin ပဲသုံးလို့ရပါတယ်။"
+        )
+        return
+
+    text = update.message.text or ""
+
+    content = text[len("/setreply"):].strip()
+
+    if "|" not in content:
+        await update.message.reply_text(
+            "ပုံစံမှားနေပါတယ်။\n\n"
+            "ဥပမာ:\n"
+            "/setreply မင်္ဂလာပါ | မင်္ဂလာပါဗျာ"
+        )
+        return
+
+    trigger, response = content.split("|", 1)
+
+    trigger = trigger.strip()
+    response = response.strip()
+
+    if not trigger or not response:
+        await update.message.reply_text(
+            "စာနဲ့ ပြန်စာ နှစ်ခုလုံးထည့်ပေးပါ။"
+        )
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    if chat_id not in replies:
+        replies[chat_id] = {}
+
+    replies[chat_id][trigger.lower()] = {
+        "trigger": trigger,
+        "response": response
+    }
+
+    save_replies()
+
+    await update.message.reply_text(
+        f"Reply သတ်မှတ်ပြီးပါပြီ။\n\n"
+        f"စာ: {trigger}\n"
+        f"ပြန်စာ: {response}"
+    )
+
+    print(
+        f"SET REPLY: "
+        f"{chat_id} | {trigger} -> {response}"
+    )
+
+
+async def list_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    if not update.effective_chat:
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    group_replies = replies.get(chat_id, {})
+
+    if not group_replies:
+        await update.message.reply_text(
+            "ဒီ GP မှာ reply သတ်မှတ်ထားတာ မရှိသေးပါ။"
+        )
+        return
+
+    lines = ["သတ်မှတ်ထားတဲ့ Reply များ:\n"]
+
+    number = 1
+
+    for item in group_replies.values():
+        trigger = item["trigger"]
+        response = item["response"]
+
+        lines.append(
+            f"{number}. {trigger} → {response}"
+        )
+
+        number += 1
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+
+async def delete_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    if not update.effective_chat:
+        return
+
+    if not await is_admin(update, context):
+        await update.message.reply_text(
+            "ဒီ command ကို Admin ပဲသုံးလို့ရပါတယ်။"
+        )
+        return
+
+    text = update.message.text or ""
+
+    trigger = text[len("/delreply"):].strip()
+
+    if not trigger:
+        await update.message.reply_text(
+            "ဥပမာ:\n"
+            "/delreply မင်္ဂလာပါ"
+        )
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    group_replies = replies.get(chat_id, {})
+
+    key = trigger.lower()
+
+    if key not in group_replies:
+        await update.message.reply_text(
+            f"\"{trigger}\" အတွက် reply မတွေ့ပါ။"
+        )
+        return
+
+    del group_replies[key]
+
+    save_replies()
+
+    await update.message.reply_text(
+        f"\"{trigger}\" reply ကို ဖျက်ပြီးပါပြီ။"
+    )
+
+
+async def clear_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    if not update.effective_chat:
+        return
+
+    if not await is_admin(update, context):
+        await update.message.reply_text(
+            "ဒီ command ကို Admin ပဲသုံးလို့ရပါတယ်။"
+        )
+        return
+
+    chat_id = str(update.effective_chat.id)
+
+    if chat_id not in replies or not replies[chat_id]:
+        await update.message.reply_text(
+            "ဖျက်စရာ reply မရှိပါ။"
+        )
+        return
+
+    replies[chat_id] = {}
+
+    save_replies()
+
+    await update.message.reply_text(
+        "ဒီ GP ရဲ့ reply အားလုံး ဖျက်ပြီးပါပြီ။"
+    )
+
+
+async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
 
-    if not message:
+    if not message or not user or not chat:
         return
 
-    if not user:
-        return
-
-    if not chat:
-        return
-
-    # Bot message မဖတ်
     if user.is_bot:
         return
 
@@ -357,171 +286,48 @@ async def check_message(
     if not text.strip():
         return
 
-    print(
-        f"MESSAGE: chat={chat.id} "
-        f"user={user.first_name} "
-        f"text={text}"
-    )
+    chat_id = str(chat.id)
 
-    # =========================
-    # LINK SPAM
-    # =========================
+    group_replies = replies.get(chat_id, {})
 
-    if LINK_PATTERN.search(text):
-
-        key = (chat.id, user.id)
-
-        warnings[key] += 1
-
-        count = warnings[key]
-
-        print(
-            f"LINK WARNING: "
-            f"{user.first_name} "
-            f"{count}/3"
-        )
-
-        try:
-
-            await message.delete()
-
-        except Exception as e:
-
-            print(
-                "DELETE ERROR:",
-                repr(e)
-            )
-
-        # =========================
-        # 3 WARNINGS = MUTE
-        # =========================
-
-        if count >= 3:
-
-            try:
-
-                await context.bot.restrict_chat_member(
-                    chat.id,
-                    user.id,
-                    permissions=ChatPermissions(
-                        can_send_messages=False
-                    )
-                )
-
-                await context.bot.send_message(
-                    chat.id,
-                    f"{user.first_name} ကို "
-                    f"3 warnings ပြည့်လို့ mute လုပ်လိုက်ပြီ"
-                )
-
-            except Exception as e:
-
-                print(
-                    "MUTE ERROR:",
-                    repr(e)
-                )
-
-            warnings[key] = 0
-
-        else:
-
-            try:
-
-                await context.bot.send_message(
-                    chat.id,
-                    f"{user.first_name} Warning {count}/3"
-                )
-
-            except Exception as e:
-
-                print(
-                    "WARNING MESSAGE ERROR:",
-                    repr(e)
-                )
-
+    if not group_replies:
         return
 
-    # =========================
-    # SEND TO AI
-    # =========================
+    key = text.strip().lower()
 
-    print("SENDING TO AI...")
-
-    reply = await asyncio.to_thread(
-        ask_noe,
-        chat.id,
-        user.first_name,
-        text
-    )
-
-    # =========================
-    # AI FAILED
-    # =========================
-
-    if reply is None:
-
-        print(
-            "AI REPLY FAILED - NO MESSAGE SENT"
-        )
-
+    if key not in group_replies:
         return
 
-    # =========================
-    # SEND AI REPLY
-    # =========================
+    response = group_replies[key]["response"]
 
     try:
-
-        await message.reply_text(
-            reply
-        )
-
-        print("TELEGRAM REPLY SENT")
-
-    except Exception as e:
+        await message.reply_text(response)
 
         print(
-            "TELEGRAM REPLY ERROR:",
-            repr(e)
+            f"REPLY SENT: "
+            f"{text} -> {response}"
         )
 
+    except Exception as e:
+        print("REPLY ERROR:", repr(e))
 
-# =========================
-# ERROR HANDLER
-# =========================
 
-async def error_handler(
-    update: object,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(
         "TELEGRAM ERROR:",
         repr(context.error)
     )
 
 
-# =========================
-# MAIN
-# =========================
-
 def main():
-
     if not TOKEN:
-
         raise RuntimeError(
             "BOT_TOKEN မတွေ့ပါ"
         )
 
-    if not OPENROUTER_API_KEY:
-
-        raise RuntimeError(
-            "OPENROUTER_API_KEY မတွေ့ပါ"
-        )
-
     print("BOT TOKEN: OK")
-    print("OPENROUTER KEY: OK")
-    print("MODEL:", MODEL)
+    print("AI REPLY: DISABLED")
+    print("GROUP REPLY BOT STARTED")
 
     app = (
         Application
@@ -531,10 +337,27 @@ def main():
     )
 
     app.add_handler(
-        CommandHandler(
-            "start",
-            start
-        )
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("help", help_command)
+    )
+
+    app.add_handler(
+        CommandHandler("setreply", set_reply)
+    )
+
+    app.add_handler(
+        CommandHandler("listreply", list_reply)
+    )
+
+    app.add_handler(
+        CommandHandler("delreply", delete_reply)
+    )
+
+    app.add_handler(
+        CommandHandler("clearreply", clear_reply)
     )
 
     app.add_handler(
@@ -544,22 +367,14 @@ def main():
         )
     )
 
-    app.add_error_handler(
-        error_handler
-    )
+    app.add_error_handler(error_handler)
 
-    print(
-        "NOE AI CHAT STARTED"
-    )
+    print("BOT IS RUNNING...")
 
     app.run_polling(
         drop_pending_updates=True
     )
 
-
-# =========================
-# RUN
-# =========================
 
 if __name__ == "__main__":
     main()
