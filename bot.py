@@ -18,8 +18,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 warnings = defaultdict(int)
-
-# Keep only a small recent conversation
 chat_history = defaultdict(lambda: deque(maxlen=4))
 
 LINK_PATTERN = re.compile(
@@ -30,8 +28,6 @@ LINK_PATTERN = re.compile(
 
 def ask_noe(chat_id, user_name, user_text):
     try:
-        history = list(chat_history[chat_id])
-
         messages = [
             {
                 "role": "system",
@@ -39,30 +35,24 @@ def ask_noe(chat_id, user_name, user_text):
                     "You are Noe in a Burmese Telegram group. "
                     "Talk naturally like a close Burmese friend. "
                     "Use simple everyday Burmese. "
-                    "Keep replies very short and natural. "
-                    "Usually reply in one short sentence. "
-                    "Answer only what the person said or asked. "
-                    "Do not invent strange questions or meanings. "
-                    "Do not sound like an AI, assistant, teacher, or customer service. "
+                    "Keep replies short, usually one sentence. "
+                    "Answer directly and naturally. "
+                    "Do not sound like an AI assistant. "
                     "Do not use formal Burmese. "
                     "Do not use words like ကျွန်ုပ် or အသုံးပြုသူ. "
-                    "Do not repeat the user's words. "
-                    "Do not give explanations unless needed. "
+                    "Do not repeat the user's message. "
+                    "Do not invent strange meanings or questions. "
                     "Never use emojis or decorative symbols. "
-                    "Do not add greetings unless appropriate. "
-                    "If someone says မင်္ဂလာပါ, reply simply မင်္ဂလာပါ. "
-                    "If someone asks နေကောင်းလား, reply naturally like ကောင်းတယ် နင်ရော. "
-                    "If someone asks ဘာလုပ်နေတာလဲ, reply naturally like ဒီမှာပဲ နင်ကရော. "
+                    "Do not give long explanations unless necessary. "
                     "Match the user's casual speaking style. "
                     "Do not make up personal information. "
-                    "Do not mention AI unless directly asked. "
-                    "If directly asked whether you are an AI or bot, answer honestly. "
+                    "If asked whether you are an AI or bot, answer honestly. "
                     "Never claim to be a real human."
                 ),
             }
         ]
 
-        messages.extend(history)
+        messages.extend(list(chat_history[chat_id]))
 
         messages.append(
             {
@@ -78,13 +68,15 @@ def ask_noe(chat_id, user_name, user_text):
                 "Content-Type": "application/json",
             },
             json={
-                # Direct free model instead of random free router
-                "model": "google/gemma-4-26b-a4b-it:free",
+                "model": "openrouter/free",
+                "models": [
+                    "openrouter/free"
+                ],
                 "messages": messages,
-                "max_tokens": 80,
-                "temperature": 0.7,
+                "max_tokens": 60,
+                "temperature": 0.5,
             },
-            timeout=15,
+            timeout=20,
         )
 
         if response.status_code != 200:
@@ -96,17 +88,18 @@ def ask_noe(chat_id, user_name, user_text):
         choices = data.get("choices")
 
         if not choices:
-            print("AI RESPONSE ERROR:", data)
+            print("NO CHOICES:", data)
             return "ခဏလေး"
 
-        reply = choices[0]["message"]["content"]
+        reply = choices[0].get("message", {}).get("content", "")
 
         if not reply:
-            return "မသိသေးဘူး"
+            print("EMPTY REPLY:", data)
+            return "ခဏလေး"
 
         reply = reply.strip()
 
-        # Remove emojis if the model still sends any
+        # Remove emojis
         reply = re.sub(
             r"[\U0001F300-\U0001FAFF"
             r"\U00002700-\U000027BF"
@@ -114,6 +107,9 @@ def ask_noe(chat_id, user_name, user_text):
             "",
             reply
         ).strip()
+
+        if not reply:
+            return "ခဏလေး"
 
         chat_history[chat_id].append(
             {
@@ -162,7 +158,6 @@ async def check_message(
     if not text.strip():
         return
 
-    # Link spam protection
     if LINK_PATTERN.search(text):
         warnings[(chat.id, user.id)] += 1
         count = warnings[(chat.id, user.id)]
@@ -235,7 +230,7 @@ def main():
         )
     )
 
-    print("Noe Faster Natural Chat Started")
+    print("Noe Stable Natural Chat Started")
 
     app.run_polling()
 
