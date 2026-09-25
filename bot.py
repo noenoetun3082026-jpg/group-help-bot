@@ -1,8 +1,7 @@
 import os
-import json
 import random
 import time
-from collections import defaultdict, deque
+import json
 
 from telegram import Update
 from telegram.ext import (
@@ -13,1118 +12,833 @@ from telegram.ext import (
     filters,
 )
 
-# =========================================================
-# CONFIG
-# =========================================================
+# =========================
+# SETTINGS
+# =========================
 
-TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-
-OWNER_ID = 0
-
-REPLIES_FILE = "replies.json"
-GROUPS_FILE = "groups.json"
-STICKERS_FILE = "stickers.json"
-
-# Reply ပိုများအောင်
-SPONTANEOUS_CHANCE = 0.75
-
-# တစ် group ထဲ reply နှစ်ခါဆက်တိုက် မဖြစ်အောင်
-REPLY_COOLDOWN = 0.8
-
-# History
-HISTORY_SIZE = 20
-
-
-# =========================================================
-# TOKEN CHECK
-# =========================================================
+TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 if not TOKEN:
-    print("================================")
-    print("ERROR: BOT_TOKEN IS MISSING")
-    print("Please add BOT_TOKEN in Environment Variables")
-    print("================================")
+    print("ERROR: BOT_TOKEN is missing")
     raise SystemExit(1)
 
+REPLY_CHANCE = 0.75
+REPLY_COOLDOWN = 0.8
+STICKER_LIMIT = 150
 
-# =========================================================
-# JSON FUNCTIONS
-# =========================================================
+STICKER_FILE = "stickers.json"
+CUSTOM_FILE = "replies.json"
+
+last_reply_text = {}
+last_reply_time = {}
+last_user = {}
+last_sticker = {}
+chat_history = {}
+
+# =========================
+# NORMAL REPLIES
+# =========================
+
+NORMAL = [
+    "သူခိုး",
+    "စပ့",
+    "ငါလဲဂေ့",
+    "မိုးကိုး မရွားဘူးရေးးး",
+    "လာပြီလေ",
+    "စီ",
+    "သေပြ",
+    "နယူး",
+    "ဆွေ",
+    "စောင်း",
+    "ဘာလုပ်နေတာလဲ",
+    "ဟုတ်လား",
+    "အဲ့လိုလား",
+    "ငါလဲမသိဘူး",
+    "ဘာဖြစ်တာလဲ",
+    "အေးလေ",
+    "အဲ့ဒါပဲ",
+    "ပြောလေ",
+    "ဆက်ပြော",
+    "နားထောင်နေတယ်",
+    "ဟုတ်တယ်",
+    "မဟုတ်ဘူးထင်တယ်",
+    "အဲ့တာကတော့ဟုတ်တယ်",
+    "ဘာတွေပြောနေတာလဲ",
+    "မသိဘူးဟ",
+    "အေးဆေး",
+    "လာပါ",
+    "မင်းကလဲ",
+    "တော်ပါတော့",
+    "အဲ့လိုမလုပ်နဲ့",
+    "ဘာလဲဟ",
+    "အခုမှလာတာ",
+    "ငါလဲအခုရောက်တာ",
+    "ရှိတယ်",
+    "မရှိဘူး",
+    "ရှိပါတယ်",
+    "မေးလေ",
+    "ပြောကြည့်",
+    "အင်း",
+    "အင်းပါ",
+    "ဟုတ်",
+    "ဟုတ်ကဲ့",
+    "အိုကေ",
+    "ရတယ်",
+    "မရဘူး",
+    "အဆင်ပြေတယ်",
+    "အဆင်မပြေဘူး",
+    "ကြည့်မယ်",
+    "ထားလိုက်",
+    "မပြောတော့ဘူး",
+    "ဘာမှမဟုတ်ပါဘူး",
+    "အေးပါ",
+    "နောက်မှပြော",
+    "အခုမအားဘူး",
+    "အားတယ်",
+    "ဘာလိုချင်တာလဲ",
+    "ပြောပါဦး",
+    "ကြားတယ်",
+    "မကြားဘူး",
+    "ပြန်ပြောဦး",
+    "ဘယ်လိုဖြစ်တာလဲ",
+    "အဲ့ဒါနဲ့ပဲ",
+    "မင်းကလဲကွာ",
+    "တကယ်လား",
+    "မယုံဘူး",
+    "ယုံတယ်",
+    "အတော်ပဲ",
+    "ရယ်ရတယ်",
+    "ဟာ",
+    "ဟုတ်တော့ဟုတ်တယ်",
+    "အင်းဟ",
+    "ဘာပဲဖြစ်ဖြစ်",
+    "မေးကြည့်ပါ",
+    "ငါမသိ",
+    "သိတယ်",
+    "မသိချင်ဘူး",
+    "ပြောလေကွာ",
+    "စကားဝင်ပြောပါ",
+    "မပျင်းနဲ့",
+    "စကားပြောကြမယ်",
+    "ငြိမ်နေကြတာပဲ",
+    "ဘယ်သူမှမပြောဘူး",
+    "အိပ်နေကြတာလား",
+    "ငါတော့မအိပ်သေးဘူး",
+    "ဒီမှာပါ",
+    "ရှိပါတယ်ကွာ",
+    "အခုရောက်တယ်",
+    "နောက်ကျသွားပြီ",
+    "သေချာလား",
+    "ဟုတ်မဟုတ်မသိ",
+    "အဲ့ဒါကြည့်",
+    "ဘာတွေဖြစ်နေကြတာလဲ",
+    "ငါလဲလိုက်မယ်",
+    "ယူလိုက်ပါလား",
+    "မယူဘူးလို့",
+    "မယူရင်ထားလိုက်",
+    "တော်ပြီ",
+    "ပြီးပြီလေ",
+]
+
+# =========================
+# SHORT - 50
+# =========================
+
+SHORT = [
+    "အင်း",
+    "ဟုတ်",
+    "အေး",
+    "ဟာ",
+    "အို",
+    "အဲ့",
+    "ဘာ",
+    "ဘယ်လို",
+    "တကယ်",
+    "ဟုတ်လား",
+    "အေးပါ",
+    "ရတယ်",
+    "မရဘူး",
+    "လာ",
+    "ပြော",
+    "ဆက်",
+    "အခု",
+    "နောက်မှ",
+    "ဟုတ်တယ်",
+    "မဟုတ်ဘူး",
+    "အဲ့ဒါပဲ",
+    "ဘာလဲ",
+    "မသိဘူး",
+    "အိုကေ",
+    "ထား",
+    "ဟုတ်ကဲ့",
+    "အင်းဟ",
+    "အေးဟ",
+    "ဟုတ်ဟ",
+    "ဘာဖြစ်",
+    "ဘာလို့",
+    "ဘယ်သူ",
+    "ဘယ်မှာ",
+    "ဘယ်တော့",
+    "ပြောဦး",
+    "လာဦး",
+    "နေဦး",
+    "ကြည့်",
+    "မေး",
+    "ရပြီ",
+    "ပြီးပြီ",
+    "မပြီးသေး",
+    "ရှိတယ်",
+    "မရှိဘူး",
+    "သိတယ်",
+    "မသိဘူး",
+    "မှန်တယ်",
+    "မမှန်ဘူး",
+    "အေးဆေး",
+    "တော်ပြီ",
+]
+
+# =========================
+# GREETING - 50
+# =========================
+
+GREETING = [
+    "လာပြီလား",
+    "အခုမှလာတာလား",
+    "လာပါ",
+    "ကြိုဆိုပါတယ်",
+    "အေး လာ",
+    "ဘယ်ပျောက်နေတာလဲ",
+    "အခုမှတွေ့တာ",
+    "လာပြီဟ",
+    "ဝင်လာပါ",
+    "စကားဝင်ပြောပါ",
+    "မပျင်းရအောင်စကားလေးဝင်ပြောနော်",
+    "အချောလေးရေ စကားဝင်ပြော စေတနာရှိရင်လူလေးထည့်ပေးနော်",
+    "ဟယ်လို",
+    "ဟလို",
+    "မင်္ဂလာပါ",
+    "ဘယ်ကလာတာလဲ",
+    "ရောက်လာပြီလား",
+    "ဝင်လာပြီလား",
+    "ဒီမှာလာပြီ",
+    "အခုမှရောက်တာလား",
+    "မတွေ့တာကြာပြီ",
+    "ဘယ်တွေသွားနေတာလဲ",
+    "လာပြီဆိုပြောလေ",
+    "ဝင်လာပြီးငြိမ်မနေနဲ့",
+    "စကားလေးပြောပါဦး",
+    "ဒီမှာရှိတယ်",
+    "လာလာ",
+    "ဝင်ခဲ့",
+    "ရောက်လာတာကောင်းတယ်",
+    "အခုမှတွေ့တာပဲ",
+    "လာရင်စကားပြောဦး",
+    "မင်္ဂလာညပါ",
+    "မင်္ဂလာနေ့ပါ",
+    "မနက်ခင်းပါ",
+    "ညနေခင်းပါ",
+    "ညဘက်လာပြီလား",
+    "မနက်ကတည်းကမတွေ့ဘူး",
+    "ဘယ်လိုလဲ",
+    "အဆင်ပြေလား",
+    "နေကောင်းလား",
+    "လာပါဦး",
+    "ဝင်ပါဦး",
+    "စကားဝင်ပါဦး",
+    "အခုမှရောက်တာ",
+    "လာပြီဆိုရင်ပြော",
+    "မင်းလဲလာပြီပဲ",
+    "အားလုံးလာပြီလား",
+    "ဘယ်သူလာတာလဲ",
+    "ရောက်နေပြီလား",
+    "ဒီမှာပဲရှိတယ်",
+]
+
+# =========================
+# QUESTION - 50
+# =========================
+
+QUESTION = [
+    "ဘာမေးတာလဲ",
+    "မသိဘူးဟ",
+    "မေးကြည့်လေ",
+    "အဲ့ဒါကိုမေးတာလား",
+    "ဘယ်လိုသိမလဲ",
+    "မင်းပဲသိမှာပါ",
+    "အဖြေကတော့မသိဘူး",
+    "စဉ်းစားနေတယ်",
+    "ခဏနေပြောမယ်",
+    "အဲ့ဒါကတော့ခက်တယ်",
+    "မေးခွန်းကကြီးတယ်",
+    "တကယ်မသိဘူး",
+    "ဘယ်လိုလုပ်ရမလဲ",
+    "မင်းကဘယ်လိုထင်လဲ",
+    "ငါ့ကိုမေးတာလား",
+    "ဘာကြောင့်လဲ",
+    "ဘယ်သူသိမလဲ",
+    "ဘယ်မှာလဲ",
+    "ဘယ်တော့လဲ",
+    "ဘာဖြစ်တာလဲ",
+    "ဘာလိုချင်တာလဲ",
+    "ဘာပြောတာလဲ",
+    "ဘာကိုဆိုလိုတာလဲ",
+    "အဲ့ဒါသေချာလား",
+    "တကယ်မေးတာလား",
+    "မေးလေ",
+    "နောက်တစ်ခါပြောဦး",
+    "နားမလည်ဘူး",
+    "ပြန်မေးပါ",
+    "ငါလဲမသိဘူး",
+    "မေးရင်ဖြေမယ်",
+    "အဲ့ဒါဘယ်လိုဖြစ်တာလဲ",
+    "ဘယ်ကရတာလဲ",
+    "ဘယ်သူလုပ်တာလဲ",
+    "ဘယ်သူပြောတာလဲ",
+    "ဘာလို့ဒီလိုဖြစ်တာလဲ",
+    "ဘာကြောင့်ဒီလိုပြောတာလဲ",
+    "အဖြေလိုချင်တာလား",
+    "ငါ့ကိုမေးနေတာလား",
+    "မင်းသိလား",
+    "မင်းကရောသိလား",
+    "အဲ့တာဟုတ်လား",
+    "မဟုတ်ဘူးလား",
+    "ဘာထင်လဲ",
+    "ဘယ်လိုထင်လဲ",
+    "အခုဘာလုပ်မလဲ",
+    "နောက်ဘာဖြစ်မလဲ",
+    "အဲ့ဒါနောက်ကဘာလဲ",
+    "ဘာကိုရှာနေတာလဲ",
+    "ဘာဖြစ်ချင်တာလဲ",
+]
+
+# =========================
+# TEASE - 50
+# =========================
+
+TEASE = [
+    "မင်းကလဲ",
+    "သူခိုးကတော့သူခိုးပဲ",
+    "တော်ပါတော့",
+    "အရမ်းတတ်နေတယ်",
+    "အဲ့လိုကြီးမလုပ်နဲ့",
+    "ဘာတွေကြံနေတာလဲ",
+    "သိနေတယ်နော်",
+    "မလိမ်နဲ့",
+    "မင်းကိုသိတယ်",
+    "ဟုတ်ချင်ယောင်ဆောင်နေတာ",
+    "အဲ့ဒါမယုံဘူး",
+    "အရမ်းရမ်းနေတယ်",
+    "ငြိမ်ငြိမ်နေ",
+    "မင်းကတော့ဟာ",
+    "တော်ပြီနော်",
+    "အရမ်းတတ်တယ်",
+    "မင်းပဲလေ",
+    "မလိမ်နဲ့ကွာ",
+    "သိပါတယ်",
+    "မင်းလုပ်တာမဟုတ်လား",
+    "မင်းပဲစတာ",
+    "အခုမှရိုးသားပြနေတယ်",
+    "အရမ်းအေးဆေးနေတာပဲ",
+    "ဟန်ဆောင်မနေနဲ့",
+    "ငါသိတယ်နော်",
+    "မင်းကိုမယုံဘူး",
+    "အဲ့လိုမပြောနဲ့",
+    "ဘာတွေပြောနေတာလဲ",
+    "ရမ်းနေပြန်ပြီ",
+    "မင်းကတော်တော်လေး",
+    "အရမ်းလည်တယ်",
+    "လိမ္မာလိုက်တာ",
+    "တော်တော်တတ်တယ်",
+    "မင်းနဲ့တော့ခက်တယ်",
+    "မင်းကိုတော့မနိုင်ဘူး",
+    "ပြောလေ အမှန်ပြော",
+    "မဖုံးနဲ့",
+    "ဖော်ပြလိုက်",
+    "သိနေတယ်လို့",
+    "မင်းအကြောင်းသိတယ်",
+    "အဲ့ဒါမျိုးမလုပ်နဲ့",
+    "တော်တော့ကွာ",
+    "မရမ်းနဲ့",
+    "အေးအေးဆေးဆေးနေ",
+    "ဘာတွေကြံနေတာလဲဟ",
+    "မင်းကလဲအရမ်းပဲ",
+    "ရယ်ရတယ်ကွာ",
+    "မင်းကိုကြည့်ရတာ",
+    "တော်ပြီဟ",
+]
+
+# =========================
+# NOE - 50
+# =========================
+
+NOE = [
+    "ဘာလဲ",
+    "ခေါ်တာလား",
+    "နိုးရှိတယ်",
+    "ဘာပြောမလို့လဲ",
+    "နိုးကိုခေါ်တာလား",
+    "ပြောလေ",
+    "ကြားတယ်",
+    "ရှိတယ်ဟ",
+    "ဘာလိုချင်တာလဲ",
+    "လာပြီ",
+    "နိုးဒီမှာပါ",
+    "ဘာဖြစ်တာလဲ",
+    "ဘာပြောမလို့လဲ",
+    "နိုးနားထောင်နေတယ်",
+    "ပြောကြည့်",
+    "ခေါ်လိုက်တာလား",
+    "နိုးရှိနေတယ်",
+    "အင်း ဘာလဲ",
+    "ပြောပါ",
+    "နိုးကိုခေါ်ရင်လာတယ်",
+    "ရှိပါတယ်",
+    "နိုးကဒီမှာ",
+    "ဘာလိုလဲ",
+    "ဘာမေးမလို့လဲ",
+    "မေးလေ",
+    "ပြောလေကွာ",
+    "နိုးကြားတယ်",
+    "အခုရောက်ပြီ",
+    "နိုးလာပြီ",
+    "နိုးမအိပ်သေးဘူး",
+    "နိုးဒီမှာရှိတယ်",
+    "ခေါ်နေတာကြားတယ်",
+    "ဘာဖြစ်လို့ခေါ်တာလဲ",
+    "နိုးကိုပြောတာလား",
+    "နိုးနားထောင်မယ်",
+    "ဘာပြောမလို့လဲပြော",
+    "ပြောပါဦး",
+    "နိုးအဆင်သင့်ပဲ",
+    "ဘာလုပ်ပေးရမလဲ",
+    "နိုးကိုလိုတာလား",
+    "လာခဲ့ပြီ",
+    "နိုးပြန်လာပြီ",
+    "ခေါ်တာနဲ့လာပြီ",
+    "ဘာတွေဖြစ်နေတာလဲ",
+    "နိုးမသိသေးဘူး",
+    "နိုးလဲသိချင်တယ်",
+    "ပြောရင်နားထောင်မယ်",
+    "နိုးရှိနေပါတယ်",
+    "အင်း နိုးပါ",
+]
+
+# =========================
+# JSON
+# =========================
 
 def load_json(filename, default):
     try:
-        if not os.path.exists(filename):
-            return default
-
         with open(filename, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        return data
-
-    except Exception as e:
-        print("LOAD ERROR:", filename, e)
+            return json.load(f)
+    except Exception:
         return default
 
 
 def save_json(filename, data):
     try:
         with open(filename, "w", encoding="utf-8") as f:
-            json.dump(
-                data,
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
-
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("SAVE ERROR:", filename, e)
+        print("SAVE ERROR:", e)
 
 
-# =========================================================
-# DATA
-# =========================================================
+stickers = load_json(STICKER_FILE, [])
+custom_replies = load_json(CUSTOM_FILE, {})
 
-replies = load_json(
-    REPLIES_FILE,
-    {}
-)
+# =========================
+# PICK REPLY
+# =========================
 
-groups = load_json(
-    GROUPS_FILE,
-    {}
-)
-
-stickers = load_json(
-    STICKERS_FILE,
-    []
-)
-
-if not isinstance(replies, dict):
-    replies = {}
-
-if not isinstance(groups, dict):
-    groups = {}
-
-if not isinstance(stickers, list):
-    stickers = []
-
-
-# =========================================================
-# MEMORY
-# =========================================================
-
-CHAT_HISTORY = defaultdict(
-    lambda: deque(
-        maxlen=HISTORY_SIZE
-    )
-)
-
-LAST_REPLY = {}
-
-LAST_USER = {}
-
-LAST_STICKER = {}
-
-LAST_REPLY_TIME = {}
-
-
-# =========================================================
-# NORMAL REPLIES
-# =========================================================
-
-NORMAL_REPLIES = [
-
-    "အင်း",
-    "ဟုတ်",
-    "အေး",
-    "ဟုတ်တယ်",
-    "ဟုတ်ပါ့",
-    "ရတယ်",
-    "အိုကေ",
-    "သိပြီ",
-    "ကြားတယ်",
-    "ပြောလေ",
-    "ဆက်ပြော",
-    "ဘာဖြစ်တာလဲ",
-    "ဘာလုပ်နေတာလဲ",
-    "အဲ့လိုလား",
-    "အင်းပါ",
-    "အေးဆေး",
-    "ရပါတယ်",
-    "မသိဘူး",
-    "မသိသေးဘူး",
-    "ဟာ",
-    "ဟေ့",
-    "အမယ်",
-    "ဟုတ်လား",
-    "ဘာပြောတာ",
-    "ဘာလဲ",
-    "ဘယ်လိုဖြစ်တာလဲ",
-    "အဲ့တာတော့မသိ",
-    "မင်းကလဲ",
-    "တော်တော့",
-    "အင်းနော်",
-    "အေးပါကွာ",
-    "ကောင်းပြီ",
-    "ရပြီ",
-    "ရပြီလေ",
-    "လာပြီ",
-    "လာပြီလေ",
-    "နားထောင်နေတယ်",
-    "စကားဝင်ပြောလေ",
-    "ပြောပါဦး",
-    "ဘာဖြစ်ကြတာလဲ",
-    "ငြိမ်နေပါဦး",
-    "မပျင်းနဲ့",
-    "အဲ့တာဘာလဲ",
-    "ဘယ်သူလဲ",
-    "ဘယ်ကလာတာလဲ",
-    "အဲ့လိုကြီးလား",
-    "အေးကွာ",
-    "အင်းကွာ",
-    "ဟုတ်ကဲ့",
-    "ဟုတ်ပါတယ်",
-    "အိုကေပါ",
-    "ရပါတယ်ကွာ",
-    "မင်းပြောတာကြားတယ်",
-    "အေး နားလည်တယ်",
-    "သိပါတယ်",
-    "သိပြီလို့",
-    "ပြောနေတာပဲ",
-    "ဘာဖြစ်လို့လဲ",
-    "အခုမှလား",
-    "အရင်ကတည်းကလေ",
-    "အဲ့တာပဲ",
-    "အဲ့လိုပဲ",
-    "ဟုတ်မဟုတ်တော့မသိ",
-    "မေးကြည့်လေ",
-    "ပြောကြည့်",
-    "လုပ်ကြည့်လေ",
-    "စောင့်ဦး",
-    "ခဏလေး",
-    "အေးအေး",
-    "မမြန်နဲ့",
-    "ဘာမှမဖြစ်ဘူး",
-    "ရပါတယ် မပူနဲ့",
-    "အေးဆေးလုပ်",
-    "အဆင်ပြေတယ်",
-    "အဆင်ပြေပါတယ်",
-    "ကောင်းတယ်",
-    "မဆိုးဘူး",
-    "အဲ့တာကောင်းတယ်",
-    "ဟုတ်သားပဲ",
-    "အဲ့တာတော့ဟုတ်တယ်",
-    "မဟုတ်လောက်ဘူး",
-    "မဟုတ်ဘူးထင်တယ်",
-    "ထင်တာပဲ",
-    "မသေချာဘူး",
-    "နောက်မှပြော",
-    "အခုမပြောသေးဘူး",
-    "နားမလည်ဘူး",
-    "ရှင်းပြလေ",
-    "ထပ်ပြော",
-    "တစ်ခါထပ်ပြော",
-    "ကြားမိတယ်",
-    "မြင်တယ်",
-    "တွေ့တယ်",
-    "အဲ့တာနဲ့လား",
-    "ဘာဆိုင်လို့လဲ",
-    "ဘာတွေဖြစ်နေတာလဲ",
-    "အေးဟုတ်တယ်",
-    "ဟုတ်တာပေါ့",
-    "အင်းဟုတ်",
-    "အဲ့လိုပဲနော်",
-    "ကဲ ပြော",
-]
-
-
-# =========================================================
-# SHORT REPLIES
-# =========================================================
-
-SHORT_REPLIES = [
-
-    "ဟာ",
-    "အင်း",
-    "အေး",
-    "ဟုတ်",
-    "ရပြီ",
-    "လာ",
-    "ပြော",
-    "ဘာ",
-    "အယ်",
-    "ဟေ့",
-    "ဟုတ်လား",
-    "အင်းလေ",
-    "အေးလေ",
-    "ကဲ",
-    "အို",
-    "ဟာကွာ",
-    "အမယ်",
-    "အဲ့",
-    "ဘာလဲ",
-    "သေပြီ",
-    "မဟုတ်",
-    "ဟုတ်တယ်",
-    "အေးပါ",
-    "ရတယ်",
-    "ရပြီလေ",
-    "လာပြီ",
-    "စီ",
-    "A",
-    "B",
-    "C",
-    "D",
-    "Z",
-    "နယူး",
-    "ဆွေ",
-    "နိုး",
-    "ဟမ်",
-    "အယ်လေ",
-    "ဟာဟ",
-    "အင်းဟ",
-    "အေးဟ",
-    "ပြောလေ",
-    "ဆက်",
-    "ဘာဖြစ်",
-    "ဘယ်လို",
-    "အဲ့လို",
-    "မသိ",
-    "သိပြီ",
-    "ကောင်း",
-    "အိုကေ",
-]
-
-
-# =========================================================
-# TEASE REPLIES
-# =========================================================
-
-TEASE_REPLIES = [
-
-    "စတာ",
-    "နောက်တာ",
-    "မရမ်းနဲ့",
-    "ရမ်းနေပြန်ပြီ",
-    "ဟာ မင်းကလဲ",
-    "တော်တော့",
-    "အေးပါ မင်းကလဲ",
-    "ဘာတွေပြောနေတာလဲ",
-    "မင်းတော်တော်ရမ်းတာပဲ",
-    "စကားကတော့မနည်းဘူး",
-    "လာပြန်ပြီ",
-    "အဲ့တာဘာလုပ်တာလဲ",
-    "မလုပ်နဲ့လေ",
-    "ရမ်းမနေနဲ့",
-    "အဲ့လိုမပြောနဲ့",
-    "ဟာကွာ",
-    "မင်းကိုပြောနေတာ",
-    "မင်းကစတာနော်",
-    "စပြီးရမ်းနေပြီ",
-    "အခုမှစတာလား",
-    "ငါသိတယ်",
-    "မင်းနောက်တာသိတယ်",
-    "အဲ့လိုလား",
-    "အမယ် မင်းက",
-    "အေးဆေးပါ",
-    "မရမ်းနဲ့လို့",
-    "မင်းပဲစတာ",
-    "မင်းပဲအရင်ပြောတာ",
-    "ငါဘာမှမလုပ်ဘူး",
-    "ငါကကြည့်နေတာ",
-    "ဘာတွေဖြစ်နေကြတာလဲ",
-    "အဲ့တာတော့ရယ်ရတယ်",
-    "တော်တော်စတာပဲ",
-    "မင်းလဲမနည်းဘူး",
-    "အဲ့လိုကြီးတော့မလုပ်နဲ့",
-    "နောက်တာလား",
-    "စတာမဟုတ်လား",
-    "သိသာတယ်",
-    "ငါမယုံဘူး",
-    "အဲ့တာတော့မရဘူး",
-    "မင်းကတော့",
-    "ဟာ မင်းကလဲကွာ",
-    "မနေနိုင်ဘူးလား",
-    "ငြိမ်ငြိမ်နေ",
-    "ဘာလို့ရမ်းတာလဲ",
-    "အေးပါကွာ",
-    "တော်ပြီ",
-    "မပြောတော့ဘူး",
-    "ငါတော့ရယ်နေပြီ",
-    "အဲ့လိုပဲလုပ်နေ",
-]
-
-
-# =========================================================
-# QUESTION REPLIES
-# =========================================================
-
-QUESTION_REPLIES = [
-
-    "ဘာလဲ",
-    "ဘာဖြစ်တာလဲ",
-    "ဘာလို့လဲ",
-    "ဘယ်လိုလဲ",
-    "ဘယ်မှာလဲ",
-    "ဘယ်သူလဲ",
-    "မသိဘူး",
-    "မသိသေးဘူး",
-    "မေးကြည့်လေ",
-    "ပြောကြည့်",
-    "ရှင်းပြလေ",
-    "အဲ့တာဘာလဲ",
-    "ဟုတ်လား",
-    "တကယ်လား",
-    "သေချာလား",
-    "ဘယ်လိုဖြစ်တာလဲ",
-    "ဘာကြောင့်လဲ",
-    "ဘာလုပ်မှာလဲ",
-    "ဘယ်ကိုသွားမှာလဲ",
-    "ဘယ်သူပြောတာလဲ",
-    "ဘယ်ကသိတာလဲ",
-    "အဲ့တာဘယ်လိုလုပ်တာလဲ",
-    "မသိဘူးနော်",
-    "ငါလဲမသိဘူး",
-    "သိရင်ပြောမယ်",
-    "နောက်မှသိမယ်",
-    "မေးကြည့်ပါ",
-    "ဘာကိုမေးတာလဲ",
-    "မေးတာနားမလည်ဘူး",
-    "ထပ်မေး",
-    "နည်းနည်းရှင်းပြ",
-    "အဲ့လိုလား",
-    "အင်း ဟုတ်လား",
-    "အဲ့တာသေချာလား",
-    "ဘယ်တုန်းကလဲ",
-    "ဘယ်သူနဲ့လဲ",
-    "ဘာတွေဖြစ်နေတာလဲ",
-    "ဘာကြီးလဲ",
-    "အခုလား",
-    "ဘယ်အချိန်လဲ",
-]
-
-
-# =========================================================
-# COMMAND REPLIES
-# =========================================================
-
-COMMAND_REPLIES = [
-
-    "လာပြီ",
-    "ရပြီ",
-    "အိုကေ",
-    "လုပ်မယ်",
-    "ခဏ",
-    "စောင့်ဦး",
-    "ပြောလေ",
-    "ဘာ command လဲ",
-    "သိပြီ",
-    "ရတယ်",
-    "အဆင်ပြေတယ်",
-    "လုပ်ကြည့်",
-    "ထပ်လုပ်",
-    "မရသေးဘူး",
-    "ရပြီလေ",
-    "လာပြီလို့",
-    "အေး",
-    "ဟုတ်",
-    "အဲ့တာလုပ်မယ်",
-    "နောက်မှလုပ်",
-    "ခဏစောင့်",
-    "ကဲလုပ်",
-    "ရတယ် လုပ်",
-    "အိုကေ လာ",
-    "သိပြီနော်",
-    "ရပြီ",
-    "လုပ်ကြည့်လေ",
-    "စမ်းကြည့်",
-    "မေးလေ",
-    "ပြောလေ",
-]
-
-
-# =========================================================
-# GREETING
-# =========================================================
-
-GREETING_REPLIES = [
-
-    "ဟယ်လို",
-    "ဟလို",
-    "အင်း ဘာလဲ",
-    "လာပြီ",
-    "ပြောလေ",
-    "ဟုတ် မင်္ဂလာပါ",
-    "ဟလို ဘာဖြစ်",
-    "အင်း ကြားတယ်",
-    "ဟုတ် ဘာပြောမလို့လဲ",
-    "လာပြီနော်",
-    "ပြောပါ",
-    "ဘာလုပ်နေကြတာလဲ",
-    "အေး ဟလို",
-    "ဟုတ်တယ် ပြော",
-    "အင်း လာ",
-]
-
-
-# =========================================================
-# TAKE REPLIES
-# =========================================================
-
-TAKE_REPLIES = [
-
-    "ယူလိုက်ပါလား",
-    "ယူမလား",
-    "ယူလိုက်",
-    "ယူပါ",
-    "ယူလေ",
-    "မယူဘူးလား",
-    "ယူလိုက်တော့",
-    "ယူကြည့်",
-    "အဲ့တာယူ",
-    "မယူနဲ့လား",
-    "ယူမှာလား",
-    "ဘယ်သူယူမလဲ",
-    "ငါတော့မယူဘူး",
-    "ယူလိုက်ပါ",
-    "သွားယူလေ",
-]
-
-
-# =========================================================
-# NOE REPLIES
-# =========================================================
-
-NOE_REPLIES = [
-
-    "ဘာလဲ",
-    "ခေါ်တာလား",
-    "အင်း ငါရှိတယ်",
-    "ဘာပြောမလို့လဲ",
-    "လာပြီ",
-    "ဟုတ် ပြော",
-    "ဘာဖြစ်တာလဲ",
-    "ငါ့ကိုခေါ်တာလား",
-    "အင်း ကြားတယ်",
-    "ပြောလေ",
-    "ဘာလုပ်ရမလဲ",
-    "အေး ငါရှိတယ်",
-    "ခေါ်ရင်လာတယ်",
-    "အင်း နိုးရှိတယ်",
-    "ဘာကိစ္စလဲ",
-]
-
-
-# =========================================================
-# SELECT REPLY
-# =========================================================
-
-def choose_reply(items, chat_id):
-
+def pick(items, chat_id):
     if not items:
-        return None
+        return "အင်း"
 
-    previous = LAST_REPLY.get(chat_id)
+    old = last_reply_text.get(chat_id)
 
-    choices = [
-        item
-        for item in items
-        if item != previous
-    ]
+    choices = [x for x in items if x != old]
 
     if not choices:
         choices = items
 
-    selected = random.choice(choices)
+    result = random.choice(choices)
+    last_reply_text[chat_id] = result
 
-    LAST_REPLY[chat_id] = selected
+    return result
 
-    return selected
+# =========================
+# MAKE REPLY
+# =========================
 
+def make_reply(text, chat_id):
+    t = text.lower().strip()
 
-# =========================================================
-# CUSTOM REPLY
-# =========================================================
-
-def custom_response(text, chat_id):
-
-    if not replies:
-        return None
-
-    lower = text.lower().strip()
-
-    for key, value in replies.items():
-
-        if key.lower() in lower:
-
-            if isinstance(value, list):
-                return choose_reply(
-                    value,
-                    chat_id
-                )
+    # Custom reply
+    for key, value in custom_replies.items():
+        if key.lower() in t:
+            if isinstance(value, list) and value:
+                return pick(value, chat_id)
 
             if isinstance(value, str):
                 return value
 
-    return None
-
-
-# =========================================================
-# MAKE RESPONSE
-# =========================================================
-
-def make_response(text, chat_id):
-
-    lower = text.lower().strip()
-
-    # Custom
-    result = custom_response(
-        text,
-        chat_id
-    )
-
-    if result:
-        return result
-
     # Greeting
-    if any(
-        x in lower
-        for x in [
-            "ဟယ်လို",
-            "ဟလို",
-            "မင်္ဂလာပါ",
-            "hello",
-            "hi",
-        ]
-    ):
-        return choose_reply(
-            GREETING_REPLIES,
-            chat_id
-        )
+    greeting_words = [
+        "ဟယ်လို",
+        "ဟလို",
+        "hello",
+        "hi",
+        "မင်္ဂလာပါ",
+        "မနက်ခင်း",
+        "ညနေခင်း",
+    ]
+
+    if any(word in t for word in greeting_words):
+        return pick(GREETING, chat_id)
 
     # Noe
-    if (
-        "နိုး" in lower
-        or "noe" in lower
-    ):
-        return choose_reply(
-            NOE_REPLIES,
-            chat_id
-        )
-
-    # Take
-    if any(
-        x in lower
-        for x in [
-            "ယူလိုက်ပါလား",
-            "ယူမလား",
-            "ယူလိုက်",
-            "ယူပါ",
-            "ယူလေ",
-        ]
-    ):
-        return choose_reply(
-            TAKE_REPLIES,
-            chat_id
-        )
+    if "နိုး" in t or "noe" in t:
+        return pick(NOE, chat_id)
 
     # Question
-    if any(
-        x in lower
-        for x in [
-            "ဘာလဲ",
-            "ဘာလို့",
-            "ဘယ်လို",
-            "ဘယ်မှာ",
-            "ဘယ်သူ",
-            "ဘာလုပ်",
-            "ဘာဖြစ်",
-            "?",
-            "လား",
-        ]
+    if (
+        "?" in text
+        or "လား" in t
+        or "ဘာ" in t
+        or "ဘယ်လို" in t
+        or "ဘယ်မှာ" in t
+        or "ဘယ်သူ" in t
     ):
-        return choose_reply(
-            QUESTION_REPLIES,
-            chat_id
-        )
+        return pick(QUESTION, chat_id)
 
     # Tease
-    if any(
-        x in lower
-        for x in [
-            "ရမ်း",
-            "စတာ",
-            "စ",
-            "ဟာ",
-            "ဟေ့",
-            "အမယ်",
-            "နောက်တာ",
-        ]
-    ):
-        return choose_reply(
-            TEASE_REPLIES,
-            chat_id
-        )
+    tease_words = [
+        "သူခိုး",
+        "စပ့",
+        "သေ",
+        "ရမ်း",
+        "အရူး",
+        "ငတုံး",
+        "မင်းက",
+        "မလိမ်",
+    ]
+
+    if any(word in t for word in tease_words):
+        return pick(TEASE, chat_id)
 
     # Short
-    if len(text) <= 2:
-        return choose_reply(
-            SHORT_REPLIES,
-            chat_id
-        )
+    if len(text) <= 4:
+        return pick(SHORT, chat_id)
 
-    # Normal random
-    if random.random() <= SPONTANEOUS_CHANCE:
-        return choose_reply(
-            NORMAL_REPLIES,
-            chat_id
-        )
+    # Normal
+    return pick(NORMAL, chat_id)
 
-    return None
+# =========================
+# STICKER
+# =========================
 
+async def handle_sticker(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    global stickers
 
-# =========================================================
-# START
-# =========================================================
+    message = update.effective_message
+
+    if not message or not message.sticker:
+        return
+
+    if message.from_user and message.from_user.is_bot:
+        return
+
+    incoming = message.sticker.file_id
+    chat_id = message.chat.id
+
+    # သိမ်း
+    if incoming not in stickers:
+        stickers.append(incoming)
+
+    if len(stickers) > STICKER_LIMIT:
+        stickers = stickers[-STICKER_LIMIT:]
+
+    save_json(STICKER_FILE, stickers)
+
+    # မတူတဲ့ sticker ရွေး
+    choices = [
+        item
+        for item in stickers
+        if item != incoming
+        and item != last_sticker.get(chat_id)
+    ]
+
+    # တခြား sticker မရှိသေးရင် incoming မဟုတ်တာရွေး
+    if not choices:
+        choices = [
+            item
+            for item in stickers
+            if item != incoming
+        ]
+
+    if not choices:
+        return
+
+    sticker = random.choice(choices)
+    last_sticker[chat_id] = sticker
+
+    try:
+        await message.reply_sticker(sticker)
+    except Exception as e:
+        print("STICKER ERROR:", e)
+
+# =========================
+# TEXT MESSAGE
+# =========================
+
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    message = update.effective_message
+
+    if not message or not message.text:
+        return
+
+    user = update.effective_user
+
+    if user and user.is_bot:
+        return
+
+    chat = update.effective_chat
+
+    if not chat:
+        return
+
+    if chat.type not in ("group", "supergroup"):
+        return
+
+    text = message.text.strip()
+
+    if not text:
+        return
+
+    if text.startswith("/"):
+        return
+
+    chat_id = chat.id
+    user_id = user.id if user else 0
+    now = time.time()
+
+    # Cooldown
+    if now - last_reply_time.get(chat_id, 0) < REPLY_COOLDOWN:
+        return
+
+    # တစ်ယောက်တည်းကို အမြဲမပြန်
+    if last_user.get(chat_id) == user_id:
+        if random.random() < 0.35:
+            return
+
+    # အမြဲမပြန်
+    if random.random() > REPLY_CHANCE:
+        return
+
+    last_reply_time[chat_id] = now
+    last_user[chat_id] = user_id
+
+    # History
+    history = chat_history.setdefault(chat_id, [])
+    history.append(text)
+
+    if len(history) > 20:
+        del history[:-20]
+
+    reply = make_reply(text, chat_id)
+
+    try:
+        await message.reply_text(reply)
+    except Exception as e:
+        print("REPLY ERROR:", e)
+
+# =========================
+# COMMANDS
+# =========================
 
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    if not update.message:
-        return
-
     await update.message.reply_text(
-        "နိုး အလုပ်လုပ်နေပါပြီ။"
+        "နိုး Bot အလုပ်လုပ်နေပါပြီ။"
     )
 
-
-# =========================================================
-# HELP
-# =========================================================
 
 async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    if not update.message:
-        return
-
     await update.message.reply_text(
-        "/start\n"
-        "/help\n"
-        "/status\n"
-        "/register\n"
-        "/groups\n"
-        "/listreply\n"
-        "/setreply စာ - ပြန်စာ\n"
-        "/delreply စာ\n"
-        "/clearreply\n"
-        "/send စာ"
+        "/start - Bot စမ်းရန်\n"
+        "/help - Help\n"
+        "/status - Status\n"
+        "/listreply - Custom reply ကြည့်ရန်\n"
+        "/setreply စာ - Reply ထည့်ရန်\n"
+        "/delreply စာ - Reply ဖျက်ရန်"
     )
 
-
-# =========================================================
-# STATUS
-# =========================================================
 
 async def status(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    if not update.message:
-        return
-
     await update.message.reply_text(
-
-        "NOE BOT STATUS\n\n"
-
-        f"Groups: {len(groups)}\n"
-
-        f"Custom replies: {len(replies)}\n"
-
-        f"Stickers: {len(stickers)}\n"
-
-        "Auto Reply: ON\n"
-
-        "Sticker Reply: ON\n"
-
-        "Emoji: OFF"
+        "NOE BOT\n"
+        "Status: Online\n"
+        f"Stored stickers: {len(stickers)}"
     )
 
-
-# =========================================================
-# REGISTER GROUP
-# =========================================================
-
-async def register(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not update.message:
-        return
-
-    chat = update.effective_chat
-
-    if chat.type not in [
-        "group",
-        "supergroup"
-    ]:
-        await update.message.reply_text(
-            "Group ထဲမှာသုံးပါ။"
-        )
-        return
-
-    groups[str(chat.id)] = {
-
-        "title":
-            chat.title or "",
-
-        "username":
-            chat.username or "",
-    }
-
-    save_json(
-        GROUPS_FILE,
-        groups
-    )
-
-    await update.message.reply_text(
-        "ဒီ group ကို register လုပ်ပြီးပါပြီ။"
-    )
-
-
-# =========================================================
-# GROUPS
-# =========================================================
-
-async def groups_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    if not update.message:
-        return
-
-    if not groups:
-        await update.message.reply_text(
-            "Register လုပ်ထားတဲ့ group မရှိသေးပါ။"
-        )
-        return
-
-    lines = [
-        "REGISTERED GROUPS"
-    ]
-
-    for gid, data in groups.items():
-
-        title = data.get(
-            "title",
-            ""
-        )
-
-        username = data.get(
-            "username",
-            ""
-        )
-
-        if username:
-
-            lines.append(
-                f"{title} @{username}\n{gid}"
-            )
-
-        else:
-
-            lines.append(
-                f"{title}\n{gid}"
-            )
-
-    await update.message.reply_text(
-        "\n\n".join(lines)
-    )
-
-
-# =========================================================
-# LIST REPLY
-# =========================================================
 
 async def list_reply(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    if not update.message:
-        return
-
-    if not replies:
-
+    if not custom_replies:
         await update.message.reply_text(
             "Custom reply မရှိသေးပါ။"
         )
-
         return
 
-    lines = [
-        "CUSTOM REPLIES"
-    ]
+    lines = ["Custom replies:"]
 
-    for key, value in replies.items():
-
-        if isinstance(value, list):
-
-            value = " / ".join(
-                value[:5]
-            )
-
-        lines.append(
-            f"{key} -> {value}"
-        )
+    for key in list(custom_replies.keys())[:30]:
+        lines.append("- " + key)
 
     await update.message.reply_text(
         "\n".join(lines)
     )
 
 
-# =========================================================
-# SET REPLY
-# =========================================================
-
 async def set_reply(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    if not update.message:
-        return
-
-    text = update.message.text or ""
-
-    parts = text.split(
-        " ",
-        2
-    )
-
-    if len(parts) < 3:
-
+    if not context.args:
         await update.message.reply_text(
-            "/setreply စာ ပြန်စာ"
+            "အသုံးပြုပုံ:\n"
+            "/setreply hello ဟယ်လို"
         )
-
         return
 
-    key = parts[1].strip()
+    key = context.args[0]
 
-    value = parts[2].strip()
-
-    if not key or not value:
-
+    if len(context.args) < 2:
         await update.message.reply_text(
-            "စာနဲ့ ပြန်စာ နှစ်ခုလုံးထည့်ပါ။"
+            "ပြန်မယ့်စာ ထည့်ပါ။"
         )
-
         return
 
-    replies[key] = value
+    value = " ".join(context.args[1:])
 
-    save_json(
-        REPLIES_FILE,
-        replies
-    )
+    custom_replies[key] = value
+    save_json(CUSTOM_FILE, custom_replies)
 
     await update.message.reply_text(
         "Reply ထည့်ပြီးပါပြီ။"
     )
 
 
-# =========================================================
-# DELETE REPLY
-# =========================================================
-
 async def del_reply(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
-    if not update.message:
-        return
-
     if not context.args:
-
         await update.message.reply_text(
-            "/delreply စာ"
+            "ဖျက်မယ့် keyword ထည့်ပါ။"
         )
-
         return
 
-    key = " ".join(
-        context.args
-    )
+    key = context.args[0]
 
-    if key not in replies:
-
+    if key not in custom_replies:
         await update.message.reply_text(
-            "အဲ့ဒီ reply မရှိပါ။"
+            "အဲဒီ reply မရှိပါဘူး။"
         )
-
         return
 
-    del replies[key]
-
-    save_json(
-        REPLIES_FILE,
-        replies
-    )
+    del custom_replies[key]
+    save_json(CUSTOM_FILE, custom_replies)
 
     await update.message.reply_text(
-        "ဖျက်ပြီးပါပြီ။"
+        "Reply ဖျက်ပြီးပါပြီ။"
     )
 
+# =========================
+# ERROR
+# =========================
 
-# =========================================================
-# CLEAR REPLIES
-# =========================================================
-
-async def clear_reply(
-    update: Update,
+async def error_handler(
+    update: object,
     context: ContextTypes.DEFAULT_TYPE
 ):
+    print("BOT ERROR:", context.error)
 
-    if not update.message:
-        return
+# =========================
+# MAIN
+# =========================
 
-    replies.clear()
-
-    save_json(
-        REPLIES_FILE,
-        replies
+def main():
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .build()
     )
 
-    await update.message.reply_text(
-        "Custom replies အားလုံးဖျက်ပြီးပါပြီ။"
+    app.add_handler(
+        CommandHandler("start", start)
     )
 
+    app.add_handler(
+        CommandHandler("help", help_command)
+    )
 
-# =========================================================
-# SEND
-# =========================================================
+    app.add_handler(
+        CommandHandler("status", status)
+    )
 
-async def send_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+    app.add_handler(
+        CommandHandler("listreply", list_reply)
+    )
 
-    if not update.message:
-        return
+    app.add_handler(
+        CommandHandler("setreply", set_reply)
+    )
 
-    if OWNER_ID != 0:
+    app.add_handler(
+        CommandHandler("delreply", del_reply)
+    )
 
-        user = update.effective_user
-
-        if not user or user.id != OWNER_ID:
-
-            await update.message.reply_text(
-                "Owner ပဲသုံးလို့ရပါတယ်။"
-            )
-
-            return
-
-    if not context.args:
-
-        await update.message.reply_text(
-            "/send စာ"
+    # Sticker
+    app.add_handler(
+        MessageHandler(
+            filters.Sticker.ALL,
+            handle_sticker
         )
-
-        return
-
-    text = " ".join(
-        context.args
     )
 
-    count = 0
-
-    for gid in list(groups.keys()):
-
-        try:
-
-            await context.bot.send_message(
-                chat_id=int(gid),
-                text=text
-            )
-
-            count += 1
-
-        except Exception as e:
-
-            print(
-                "SEND ERROR:",
-                e
-            )
-
-    await update.message.reply_text(
-        f"ပို့ပြီးပါပြီ။ Groups: {count}"
-    )
-
-
-# =========================================================
-# STICKER REPLY
-# =========================================================
-
-async def sticker_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    try:
-
-        message = update.message
-
-        if not message:
-            return
-
-        if message.chat.type not in [
-            "group",
-            "supergroup"
-        ]:
-            return
-
-        if not message.sticker:
-            return
-
-        incoming = (
-            message.sticker.file_id
+    # Text
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_message
         )
+    )
 
-        # သိမ်း
-        if incoming not in stickers:
+    app.add_error_handler(error_handler)
 
-            stickers.append(
-                incoming
-            )
+    print("NOE BOT STARTED")
 
-            # အများဆုံး 150
-            if len(stickers) > 150:
+    app.run_polling(
+        drop_pending_updates=True
+    )
 
-                del stickers[:-150]
 
-            save_json(
-                STICKERS_FILE,
-                stickers
-            )
-
-        # မတူတဲ့ sticker ရွေး
-        choices = [
-
-            item
-
-            for item in stickers
-
-            if item != incoming
-
-            and item != LAST_STICKER.get(
-                message.chat.id
-)
+if __name__ == "__main__":
+    main()
